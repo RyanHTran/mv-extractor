@@ -18,6 +18,7 @@ extern "C" {
 // for changing the dtype of motion vector
 #define MVS_DTYPE int32_t
 #define MVS_DTYPE_NP NPY_INT32
+#define MV_ELEMS 7
 
 // whether or not to print some debug info
 //#define DEBUG

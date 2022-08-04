@@ -81,7 +81,7 @@ VideoCap_retrieve(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     PyObject* frame_nd = cvt.toNDArray(frame_cv);
 
     // convert motion vector buffer into numpy array
-    npy_intp dims_mvs[2] = {(npy_intp)num_mvs, 10};
+    npy_intp dims_mvs[2] = {(npy_intp)num_mvs, MV_ELEMS};
     PyObject *motion_vectors_nd = PyArray_SimpleNewFromData(2, dims_mvs, MVS_DTYPE_NP, motion_vectors);
     PyArray_ENABLEFLAGS((PyArrayObject*)motion_vectors_nd, NPY_ARRAY_OWNDATA);
 
@@ -125,7 +125,7 @@ VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     PyObject* frame_nd = cvt.toNDArray(frame_cv);
 
     // convert motion vector buffer into numpy array
-    npy_intp dims_mvs[2] = {(npy_intp)num_mvs, 10};
+    npy_intp dims_mvs[2] = {(npy_intp)num_mvs, MV_ELEMS};
     PyObject *motion_vectors_nd = PyArray_SimpleNewFromData(2, dims_mvs, MVS_DTYPE_NP, motion_vectors);
     PyArray_ENABLEFLAGS((PyArrayObject*)motion_vectors_nd, NPY_ARRAY_OWNDATA);
 

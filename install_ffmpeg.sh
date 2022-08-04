@@ -28,7 +28,7 @@ apt-get -y install \
     libx265-dev \
     libnuma-dev \
     libvpx-dev \
-    libmp3lame-dev \
+    # libmp3lame-dev \
     libopus-dev
 
 
@@ -64,7 +64,7 @@ cd "$INSTALL_BASE_DIR"/ffmpeg_sources/ffmpeg && \
 --bindir="$INSTALL_BASE_DIR/bin" \
 --enable-gpl \
 --enable-libfreetype \
---enable-libmp3lame \
+# --enable-libmp3lame \
 --enable-libopus \
 --enable-libvorbis \
 --enable-libvpx \
