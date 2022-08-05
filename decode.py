@@ -79,6 +79,7 @@ if __name__ == "__main__":
             prev_mv_accumulate = COORDS.copy()
             curr_mv_accumulate = COORDS.copy()
         if frame_type != 'I':
+            # Motion vector accumulation
             idx = np.any(motion_vectors[:, 5:7] != motion_vectors[:, 3:5], axis=1)
             nonzero_mv = motion_vectors[idx]
             # assert bool(np.all(nonzero_mv[:,0] == -1))
