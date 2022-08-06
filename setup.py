@@ -19,8 +19,8 @@ mv_extractor = Extension('mv_extractor',
               'src/time_cvt.cpp',
               'src/mat_to_ndarray.cpp'
        ],
-       extra_compile_args = ['-std=c++11'],
-       extra_link_args = ['-fPIC', '-Wl,-Bsymbolic'])
+       extra_compile_args = ['-std=c++11', '-O3', '-fopenmp'], # '-O0', '-g'
+       extra_link_args = ['-fPIC', '-Wl,-Bsymbolic', '-lgomp'])
 
 setup(name = 'mv_extractor',
        author='Lukas Bommes',

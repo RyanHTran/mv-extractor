@@ -80,11 +80,9 @@ if __name__ == "__main__":
             curr_mv_accumulate = COORDS.copy()
         if frame_type != 'I':
             # Motion vector accumulation
-            idx = np.any(motion_vectors[:, 5:7] != motion_vectors[:, 3:5], axis=1)
-            nonzero_mv = motion_vectors[idx]
-            # assert bool(np.all(nonzero_mv[:,0] == -1))
-            window_size = nonzero_mv[:, 1:3] // 2
-            src_ctr, dst_ctr = nonzero_mv[:, 3:5], nonzero_mv[:, 5:7]
+            # assert bool(np.all(motion_vectors[:,0] == -1))
+            window_size = motion_vectors[:, 1:3] // 2
+            src_ctr, dst_ctr = motion_vectors[:, 3:5], motion_vectors[:, 5:7]
 
             src_corner = np.concatenate((src_ctr - window_size, src_ctr + window_size), axis=1)
             src_corner = get_clipped_corners(src_corner, frame_width, frame_height)
@@ -92,8 +90,8 @@ if __name__ == "__main__":
             dst_corner = np.concatenate((dst_ctr - window_size, dst_ctr + window_size), axis=1)
             dst_corner = get_clipped_corners(dst_corner, frame_width, frame_height)
 
-            unclipped_src = isnt_clipped(src_corner, nonzero_mv[:, 1], nonzero_mv[:, 2])
-            unclipped_dst = isnt_clipped(dst_corner, nonzero_mv[:, 1], nonzero_mv[:, 2])
+            unclipped_src = isnt_clipped(src_corner, motion_vectors[:, 1], motion_vectors[:, 2])
+            unclipped_dst = isnt_clipped(dst_corner, motion_vectors[:, 1], motion_vectors[:, 2])
             unclipped_idx = np.logical_and(unclipped_src, unclipped_dst)
             src_corner = src_corner[unclipped_idx]
             dst_corner = dst_corner[unclipped_idx]

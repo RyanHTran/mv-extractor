@@ -1,4 +1,5 @@
 #include "video_cap.hpp"
+#include <vector>
 
 VideoCap::VideoCap() {
     this->opts = NULL;
@@ -283,20 +284,32 @@ bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int
         *num_mvs = sd->size / sizeof(*mvs);
 
         if (*num_mvs > 0) {
+            // Retain only motion vectors with nonzero motion
+            std::vector<MVS_DTYPE> nonzero_idx;
+            nonzero_idx.reserve(6000);
+            // #pragma omp parallel for
+            for (MVS_DTYPE i = 0; i < *num_mvs; ++i) {
+                if (mvs[i].src_x != mvs[i].dst_x || mvs[i].src_y != mvs[i].dst_y){
+                    // #pragma omp critical
+                    nonzero_idx.push_back(i);
+                }
+            }
+            *num_mvs = nonzero_idx.size();
 
             // allocate memory for motion vectors as 1D array
             if (!(*motion_vectors = (MVS_DTYPE *) malloc(*num_mvs * MV_ELEMS * sizeof(MVS_DTYPE))))
                 return false;
 
             // store the motion vectors in the allocated memory (C contiguous)
-            for (MVS_DTYPE i = 0; i < *num_mvs; ++i) {
-                *(*motion_vectors + i*MV_ELEMS     ) = static_cast<MVS_DTYPE>(mvs[i].source);
-                *(*motion_vectors + i*MV_ELEMS +  1) = static_cast<MVS_DTYPE>(mvs[i].w);
-                *(*motion_vectors + i*MV_ELEMS +  2) = static_cast<MVS_DTYPE>(mvs[i].h);
-                *(*motion_vectors + i*MV_ELEMS +  3) = static_cast<MVS_DTYPE>(mvs[i].src_x);
-                *(*motion_vectors + i*MV_ELEMS +  4) = static_cast<MVS_DTYPE>(mvs[i].src_y);
-                *(*motion_vectors + i*MV_ELEMS +  5) = static_cast<MVS_DTYPE>(mvs[i].dst_x);
-                *(*motion_vectors + i*MV_ELEMS +  6) = static_cast<MVS_DTYPE>(mvs[i].dst_y);
+            for(MVS_DTYPE idx=0; idx < *num_mvs; idx++){
+                MVS_DTYPE i = nonzero_idx[idx];
+                *(*motion_vectors + idx*MV_ELEMS     ) = static_cast<MVS_DTYPE>(mvs[i].source);
+                *(*motion_vectors + idx*MV_ELEMS +  1) = static_cast<MVS_DTYPE>(mvs[i].w);
+                *(*motion_vectors + idx*MV_ELEMS +  2) = static_cast<MVS_DTYPE>(mvs[i].h);
+                *(*motion_vectors + idx*MV_ELEMS +  3) = static_cast<MVS_DTYPE>(mvs[i].src_x);
+                *(*motion_vectors + idx*MV_ELEMS +  4) = static_cast<MVS_DTYPE>(mvs[i].src_y);
+                *(*motion_vectors + idx*MV_ELEMS +  5) = static_cast<MVS_DTYPE>(mvs[i].dst_x);
+                *(*motion_vectors + idx*MV_ELEMS +  6) = static_cast<MVS_DTYPE>(mvs[i].dst_y);
             }
         }
     }
