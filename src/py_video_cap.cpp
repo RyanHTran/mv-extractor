@@ -1,6 +1,5 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include <numpy/arrayobject.h>
 #include <opencv2/core/core.hpp>
 
 #include "video_cap.hpp"
@@ -88,7 +87,6 @@ VideoCap_retrieve(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     return Py_BuildValue("(ONNsd)", ret, frame_nd, motion_vectors_nd, (const char*)frame_type, frame_timestamp);
 }
 
-
 static PyObject *
 VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
@@ -132,6 +130,45 @@ VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     return Py_BuildValue("(ONNsd)", ret, frame_nd, motion_vectors_nd, (const char*)frame_type, frame_timestamp);
 }
 
+static PyObject *
+VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
+{
+    cv::Mat frame_cv;
+    uint8_t *frame = NULL;
+    int width = 0;
+    int height = 0;
+    int step = 0;
+    int cn = 0;
+
+    PyArrayObject *accumulated_mv = NULL;
+    MVS_DTYPE num_mvs = 0;
+    char frame_type[2] = "?";
+
+    double frame_timestamp = 0;
+
+    PyObject *ret = Py_True;
+    
+    if (!self->vcap.read_accumulate(&frame, &step, &width, &height, &cn, frame_type, &accumulated_mv, &num_mvs, &frame_timestamp)) {
+        num_mvs = 0;
+        width = 0;
+        height = 0;
+        step = 0;
+        cn = 0;
+        frame_timestamp = 0;
+        accumulated_mv = (PyArrayObject *)Py_None;
+        ret = Py_False;
+    }
+
+    // copy frame buffer into new cv::Mat
+    cv::Mat(height, width, CV_MAKETYPE(CV_8U, cn), frame, step).copyTo(frame_cv);
+
+    // convert frame cv::Mat to numpy.ndarray
+    NDArrayConverter cvt;
+    PyObject* frame_nd = cvt.toNDArray(frame_cv);
+
+    return Py_BuildValue("(ONNsd)", ret, frame_nd, accumulated_mv, (const char*)frame_type, frame_timestamp);
+}
+
 
 static PyObject *
 VideoCap_release(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
@@ -146,6 +183,7 @@ static PyMethodDef VideoCap_methods[] = {
     {"read", (PyCFunction) VideoCap_read, METH_NOARGS, "Grab and decode the next frame and motion vectors"},
     {"grab", (PyCFunction) VideoCap_grab, METH_NOARGS, "Grab the next frame and motion vectors from the stream"},
     {"retrieve", (PyCFunction) VideoCap_retrieve, METH_NOARGS, "Decode the grabbed frame and motion vectors"},
+    {"read_accumulate", (PyCFunction) VideoCap_read_accumulate, METH_NOARGS, "Decode the grabbed frame and accumulate the motion vectors"},
     {"release", (PyCFunction) VideoCap_release, METH_NOARGS, "Release the video device and free ressources"},
     {NULL}  /* Sentinel */
 };

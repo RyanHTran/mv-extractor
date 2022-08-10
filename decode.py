@@ -51,7 +51,6 @@ if __name__ == "__main__":
     if args.verbose:
         print("Sucessfully opened video file")
 
-    COORDS = None
     step = 0
     gop_idx = -1
     gop_pos = 0
@@ -61,7 +60,7 @@ if __name__ == "__main__":
             print("Frame: ", step, end=" ")
 
         # read next video frame and corresponding motion vectors
-        ret, frame, motion_vectors, frame_type, timestamp = cap.read()
+        ret, frame, motion_vectors, frame_type, timestamp = cap.read_accumulate()
         # if there is an error reading the frame
         if not ret:
             if args.verbose:
@@ -69,38 +68,6 @@ if __name__ == "__main__":
             break
 
         frame_height, frame_width = frame.shape[0], frame.shape[1]
-
-        if step == 0 or frame_type == 'I':
-            if COORDS is None:
-                COORDS = np.ones((frame_height, frame_width, 2))
-                COORDS[:, :, 0] = np.cumsum(COORDS[:, :, 0], axis=1) - 1
-                COORDS[:, :, 1] = np.cumsum(COORDS[:, :, 1], axis=0) - 1
-            # Reset accumulated motion vectors
-            prev_mv_accumulate = COORDS.copy()
-            curr_mv_accumulate = COORDS.copy()
-        if frame_type != 'I':
-            # Motion vector accumulation
-            # assert bool(np.all(motion_vectors[:,0] == -1))
-            window_size = motion_vectors[:, 1:3] // 2
-            src_ctr, dst_ctr = motion_vectors[:, 3:5], motion_vectors[:, 5:7]
-
-            src_corner = np.concatenate((src_ctr - window_size, src_ctr + window_size), axis=1)
-            src_corner = get_clipped_corners(src_corner, frame_width, frame_height)
-
-            dst_corner = np.concatenate((dst_ctr - window_size, dst_ctr + window_size), axis=1)
-            dst_corner = get_clipped_corners(dst_corner, frame_width, frame_height)
-
-            unclipped_src = isnt_clipped(src_corner, motion_vectors[:, 1], motion_vectors[:, 2])
-            unclipped_dst = isnt_clipped(dst_corner, motion_vectors[:, 1], motion_vectors[:, 2])
-            unclipped_idx = np.logical_and(unclipped_src, unclipped_dst)
-            src_corner = src_corner[unclipped_idx]
-            dst_corner = dst_corner[unclipped_idx]
-
-            for i in range(src_corner.shape[0]):
-                # x1, y1, x2, y2
-                src, dst = src_corner[i], dst_corner[i]
-                curr_mv_accumulate[dst[1]:dst[3], dst[0]:dst[2]] = \
-                    prev_mv_accumulate[src[1]:src[3], src[0]:src[2]]
 
         if args.dump:
             if frame_type == 'I':
@@ -110,9 +77,7 @@ if __name__ == "__main__":
                 gop_pos += 1
 
             save_path = os.path.join('out', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
-            np.savez_compressed(save_path, (COORDS - curr_mv_accumulate).astype(np.int16))
-            
-        np.copyto(prev_mv_accumulate, curr_mv_accumulate)
+            np.savez_compressed(save_path, (motion_vectors).astype(np.int16))
 
         # print results
         if args.verbose:

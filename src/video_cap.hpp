@@ -14,6 +14,8 @@ extern "C" {
 
 #include "time_cvt.hpp"
 
+#define PY_ARRAY_UNIQUE_SYMBOL accumulator_ARRAY_API
+#include <numpy/arrayobject.h>
 
 // for changing the dtype of motion vector
 #define MVS_DTYPE int32_t
@@ -70,6 +72,8 @@ private:
     int64_t frame_number;
     double frame_timestamp;
     bool is_rtsp;
+    int *prev_mv_accumulate;
+    int *curr_mv_accumulate;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif
@@ -85,6 +89,7 @@ private:
     */
     bool check_format_rtsp(const char *format_names);
 
+    void initialize_accumulate(int **prev_mv_accumulate, int **curr_mv_accumulate, int w, int h);
 
 public:
 
@@ -188,10 +193,15 @@ public:
     *    decoded and returned successfully, false otherwise.
     */
     bool retrieve(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp);
-
+    
     /** Convenience wrapper which combines a call of `grab` and `retrieve`.
     *
     *   The parameters and return value correspond to the `retrieve` method.
     */
     bool read(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp);
+
+    // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
+    bool accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, double *frame_timestamp);
+
+    bool read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, double *frame_timestamp);
 };
