@@ -38,6 +38,7 @@ if __name__ == "__main__":
     parser.add_argument('video_url', type=str, nargs='?', default="cam2_2.mp4", help='File path or url of the video stream')
     parser.add_argument('--verbose', action=argparse.BooleanOptionalAction, default=False, help='Show detailled text output')
     parser.add_argument('--dump', action=argparse.BooleanOptionalAction, default=False, help='Dump frames, motion vectors, frame types, and timestamps to output directory')
+    parser.add_argument('--verify', action=argparse.BooleanOptionalAction, default=False, help='Verify that mv extraction is correct')
     args = parser.parse_args()
 
     cap = VideoCap()
@@ -69,13 +70,23 @@ if __name__ == "__main__":
 
         frame_height, frame_width = frame.shape[0], frame.shape[1]
 
-        if args.dump:
+        if args.dump or args.verify:
             if frame_type == 'I':
                 gop_idx += 1
                 gop_pos = 0
             else:
                 gop_pos += 1
 
+        if args.verify:
+            load_path = os.path.join('reference', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
+            reference_mv = np.load(load_path)['arr_0']
+            if not (motion_vectors == reference_mv).all():
+                print('Decoded motion vectors do not match expected output at frame {}: {}_{}.npz'.format(step, gop_idx, gop_pos))
+                print('Expected: {}'.format(reference_mv[motion_vectors != reference_mv]))
+                print('Got: {}'.format(motion_vectors[motion_vectors != reference_mv]))
+                break
+
+        if args.dump:
             save_path = os.path.join('out', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
             np.savez_compressed(save_path, (motion_vectors).astype(np.int16))
 
