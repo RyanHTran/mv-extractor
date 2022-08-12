@@ -72,8 +72,9 @@ private:
     int64_t frame_number;
     double frame_timestamp;
     bool is_rtsp;
-    int *prev_mv_accumulate;
-    int *curr_mv_accumulate;
+    PyArrayObject *running_mv_sum;
+    int *prev_locations;
+    int *curr_locations;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif
@@ -89,7 +90,7 @@ private:
     */
     bool check_format_rtsp(const char *format_names);
 
-    void initialize_accumulate(int **prev_mv_accumulate, int **curr_mv_accumulate, int w, int h);
+    void reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int w, int h);
 
 public:
 

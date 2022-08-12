@@ -15,8 +15,9 @@ VideoCap::VideoCap() {
     this->frame_number = 0;
     this->frame_timestamp = 0.0;
     this->is_rtsp = false;
-    this->prev_mv_accumulate = NULL;
-    this->curr_mv_accumulate = NULL;
+    this->running_mv_sum = NULL;
+    this->prev_locations = NULL;
+    this->curr_locations = NULL;
 
     memset(&(this->rgb_frame), 0, sizeof(this->rgb_frame));
     memset(&(this->picture), 0, sizeof(this->picture));
@@ -69,13 +70,14 @@ void VideoCap::release(void) {
     this->frame_timestamp = 0.0;
     this->is_rtsp = false;
 
-    if (this->prev_mv_accumulate != NULL){
-        free(this->prev_mv_accumulate);
-        this->prev_mv_accumulate = NULL;
+    Py_CLEAR(this->running_mv_sum);
+    if (this->prev_locations != NULL){
+        free(this->prev_locations);
+        this->prev_locations = NULL;
     }
-    if (this->curr_mv_accumulate != NULL){
-        free(this->curr_mv_accumulate);
-        this->curr_mv_accumulate = NULL;
+    if (this->curr_locations != NULL){
+        free(this->curr_locations);
+        this->curr_locations = NULL;
     }
 }
 
@@ -402,20 +404,12 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
     *step = this->picture.step;
     *cn = this->picture.cn;
 
-    if (*accumulated_mv == NULL){
-        npy_intp dims[3];
-        dims[0] = *height;
-        dims[1] = *width;
-        dims[2] = 2;
-        *accumulated_mv = (PyArrayObject *)PyArray_EMPTY(3, dims, NPY_INT32, 0);
-    }
-
     // get frame type (I, P, B, etc.) and create a null terminated c-string
     frame_type[0] = av_get_picture_type_char(this->frame->pict_type);
     frame_type[1] = '\0';
 
-    if (frame_type[0] == 'I' || this->prev_mv_accumulate == NULL || this->curr_mv_accumulate == NULL) {
-        initialize_accumulate(&(this->prev_mv_accumulate), &(this->curr_mv_accumulate), *width, *height);
+    if (frame_type[0] == 'I' || this->prev_locations == NULL || this->curr_locations == NULL || this->running_mv_sum == NULL) {
+        this->reset_accumulate(&(this->prev_locations), &(this->curr_locations), &(this->running_mv_sum), *width, *height);
     }
 
     // get motion vectors
@@ -427,14 +421,19 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
 
         if (*num_mvs > 0) {
             int p_dst_x, p_dst_y, p_src_x, p_src_y;
+            int val_x, val_y;
+            int original_x, original_y;
             const AVMotionVector *mvs = (const AVMotionVector *)sd->data;
 
-            #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) private(p_dst_x, p_dst_y, p_src_x, p_src_y) 
+            #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
+            private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
             for (int i = 0; i < sd->size / sizeof(*mvs); i++) {
                 const AVMotionVector *mv = &mvs[i];
+                val_x = mv->dst_x - mv->src_x;
+                val_y = mv->dst_y - mv->src_y;
                 // assert(mv->source == -1);
 
-                if (mv->dst_x - mv->src_x != 0 || mv->dst_y - mv->src_y != 0) {
+                if (val_x != 0 || val_y != 0) {
                     for (int x_start = (-1 * mv->w / 2); x_start < mv->w / 2; ++x_start) {
                         for (int y_start = (-1 * mv->h / 2); y_start < mv->h / 2; ++y_start) {
                             p_dst_x = mv->dst_x + x_start;
@@ -447,10 +446,19 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
                                 p_dst_x >= 0 && p_dst_x < *width &&
                                 p_src_y >= 0 && p_src_y < *height && 
                                 p_src_x >= 0 && p_src_x < *width) {
-
-                                for (int c = 0; c < 2; ++c) {
-                                    this->curr_mv_accumulate[p_dst_x * (*height) * 2 + p_dst_y * 2 + c]
-                                    = this->prev_mv_accumulate[p_src_x * (*height) * 2 + p_src_y * 2 + c];
+                                
+                                // Shift macroblock in curr_locations
+                                original_x = this->prev_locations[p_src_x * (*height) * 2 + p_src_y * 2];
+                                this->curr_locations[p_dst_x * (*height) * 2 + p_dst_y * 2] = original_x;
+                                
+                                original_y = this->prev_locations[p_src_x * (*height) * 2 + p_src_y * 2 + 1];
+                                this->curr_locations[p_dst_x * (*height) * 2 + p_dst_y * 2 + 1] = original_y;
+                                
+                                // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock 
+                                #pragma omp critical
+                                {
+                                    *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
+                                    *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
                                 }
                             }
                         }
@@ -459,18 +467,11 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
             }
         }
     }
-    #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
-    for (int x = 0; x < *width; ++x) {
-        for (int y = 0; y < *height; ++y) {
-            *((int32_t*)PyArray_GETPTR3(*accumulated_mv, y, x, 0))
-                = x - this->curr_mv_accumulate[x * (*height) * 2 + y * 2];
-            *((int32_t*)PyArray_GETPTR3(*accumulated_mv, y, x, 1))
-                = y - this->curr_mv_accumulate[x * (*height) * 2 + y * 2 + 1];
-        }
-    }
 
-    memcpy(this->prev_mv_accumulate, this->curr_mv_accumulate, (*width) * (*height) * 2 * sizeof(int));
-
+    memcpy(this->prev_locations, this->curr_locations, (*width) * (*height) * 2 * sizeof(int));
+    // Set return value to running_mv_sum
+    *accumulated_mv = this->running_mv_sum;
+    Py_INCREF(*accumulated_mv);
     // return the timestamp which was computed previously in grab()
     *frame_timestamp = this->frame_timestamp;
 
@@ -503,23 +504,33 @@ bool VideoCap::check_format_rtsp(const char *format_names) {
 }
 
 /**
- * 
+ * Resets prev_locations and curr_locations to coordinate arrays.
+ * Resets running_mv_sum to 0.
+ * Allocates arrays if they do not yet exist.
  */
-void VideoCap::initialize_accumulate(int **prev_mv_accumulate, int **curr_mv_accumulate, int w, int h) {
-    if (*prev_mv_accumulate == NULL){
-        *prev_mv_accumulate = (int*) malloc(w * h * 2 * sizeof(int));
+void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int w, int h) {
+    if (*prev_locations == NULL){
+        *prev_locations = (int*) malloc(w * h * 2 * sizeof(int));
     }
 
-    if (*curr_mv_accumulate == NULL){
-        *curr_mv_accumulate = (int*) malloc(w * h * 2 * sizeof(int));
+    if (*curr_locations == NULL){
+        *curr_locations = (int*) malloc(w * h * 2 * sizeof(int));
     }
 
     #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
-    for (size_t x = 0; x < w; ++x) {
-        for (size_t y = 0; y < h; ++y) {
-            (*prev_mv_accumulate)[x * h * 2 + y * 2    ]  = x;
-            (*prev_mv_accumulate)[x * h * 2 + y * 2 + 1]  = y;
+    for (int x = 0; x < w; ++x) {
+        for (int y = 0; y < h; ++y) {
+            (*prev_locations)[x * h * 2 + y * 2    ]  = x;
+            (*prev_locations)[x * h * 2 + y * 2 + 1]  = y;
         }
     }
-    memcpy(*curr_mv_accumulate, *prev_mv_accumulate, h * w * 2 * sizeof(int));
+    memcpy(*curr_locations, *prev_locations, h * w * 2 * sizeof(int));
+
+    if (*running_mv_sum == NULL){
+        npy_intp dims[3] = {h, w, 2};
+        *running_mv_sum = (PyArrayObject *)PyArray_ZEROS(3, dims, NPY_INT16, 0);
+    } else{
+        // Set running_mv_sum to 0
+        PyArray_FILLWBYTE(*running_mv_sum, 0);
+    }
 }
