@@ -133,7 +133,6 @@ VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 static PyObject *
 VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
-    cv::Mat frame_cv;
     uint8_t *frame = NULL;
     int width = 0;
     int height = 0;
@@ -159,12 +158,8 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
         ret = Py_False;
     }
 
-    // copy frame buffer into new cv::Mat
-    cv::Mat(height, width, CV_MAKETYPE(CV_8U, cn), frame, step).copyTo(frame_cv);
-
-    // convert frame cv::Mat to numpy.ndarray
-    NDArrayConverter cvt;
-    PyObject* frame_nd = cvt.toNDArray(frame_cv);
+    npy_intp dims[3] = {height, width, cn};
+    PyObject* frame_nd = PyArray_SimpleNewFromData(3, dims, NPY_UINT8, frame);
 
     return Py_BuildValue("(ONNsd)", ret, frame_nd, accumulated_mv, (const char*)frame_type, frame_timestamp);
 }
