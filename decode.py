@@ -78,12 +78,21 @@ if __name__ == "__main__":
                 gop_pos += 1
 
         if args.verify:
+            # Check motion vectors
             load_path = os.path.join('reference', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
             reference_mv = np.load(load_path)['arr_0']
             if not (motion_vectors == reference_mv).all():
                 print('Decoded motion vectors do not match expected output at frame {}: {}_{}.npz'.format(step, gop_idx, gop_pos))
                 print('Expected: {}'.format(reference_mv[motion_vectors != reference_mv]))
                 print('Got: {}'.format(motion_vectors[motion_vectors != reference_mv]))
+                break
+            # Check frames
+            load_path = os.path.join('reference', 'bgr', 'frame-{}.bmp'.format(step))
+            reference_bgr = cv2.imread(load_path)
+            if not (frame == reference_bgr).all():
+                print('Decoded bgr do not match expected output at frame {}'.format(step))
+                print('Expected: {}'.format(reference_bgr[frame != reference_bgr]))
+                print('Got: {}'.format(frame[frame != reference_bgr]))
                 break
 
         if args.dump:
