@@ -20,7 +20,7 @@ mv_extractor = Extension('mv_extractor',
               'src/mat_to_ndarray.cpp'
        ],
        extra_compile_args = ['-std=c++11', '-O3', '-fopenmp'],
-       # extra_compile_args = ['-std=c++11', '-O3', '-g', '-fopenmp', '-lprofiler'],
+       # extra_compile_args = ['-std=c++11', '-O3', '-fopenmp', '-g',],
        # extra_compile_args = ['-std=c++11', '-O0', '-g'],
        extra_link_args = ['-fPIC', '-Wl,-Bsymbolic', '-lgomp'])
 

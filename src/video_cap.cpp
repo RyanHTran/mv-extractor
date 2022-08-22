@@ -13,7 +13,6 @@ VideoCap::VideoCap() {
     this->frame = NULL;
     this->img_convert_ctx = NULL;
     this->frame_number = 0;
-    this->frame_timestamp = 0.0;
     this->is_rtsp = false;
     this->running_mv_sum = NULL;
     this->prev_locations = NULL;
@@ -67,7 +66,6 @@ void VideoCap::release(void) {
     this->video_stream = NULL;
     this->video_stream_idx = -1;
     this->frame_number = 0;
-    this->frame_timestamp = 0.0;
     this->is_rtsp = false;
 
     Py_CLEAR(this->running_mv_sum);
@@ -152,7 +150,8 @@ bool VideoCap::open(const char *url) {
     this->picture.width = this->video_dec_ctx->width;
     this->picture.height = this->video_dec_ctx->height;
     this->picture.data = NULL;
-
+    
+    // this->video_dec_ctx->skip_frame = AVDISCARD_NONKEY;
     // print info (duration, bitrate, streams, container, programs, metadata, side data, codec, time base)
 #ifdef DEBUG
     av_dump_format(this->fmt_ctx, 0, url, 0);
@@ -214,10 +213,6 @@ bool VideoCap::grab(void) {
         avcodec_decode_video2(this->video_dec_ctx, this->frame, &got_frame, &(this->packet));
 
         if(got_frame) {
-            // if no RTSP is used or no RTP timestamp <-> NTP walltime mapping is received, make timestamp from local system time
-            auto now = std::chrono::system_clock::now();
-            this->frame_timestamp = std::chrono::duration<double>(now.time_since_epoch()).count();
-
             this->frame_number++;
             valid = true;
         }
@@ -232,8 +227,7 @@ bool VideoCap::grab(void) {
     return valid;
 }
 
-
-bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp) {
+bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type) {
 
     if (!this->video_stream || !(this->frame->data[0]))
         return false;
@@ -291,62 +285,21 @@ bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int
     *step = this->picture.step;
     *cn = this->picture.cn;
 
-    // get motion vectors
-    AVFrameSideData *sd = av_frame_get_side_data(this->frame, AV_FRAME_DATA_MOTION_VECTORS);
-    if (sd) {
-        AVMotionVector *mvs = (AVMotionVector *)sd->data;
-
-        *num_mvs = sd->size / sizeof(*mvs);
-
-        if (*num_mvs > 0) {
-            // Retain only motion vectors with nonzero motion
-            std::vector<MVS_DTYPE> nonzero_idx;
-            nonzero_idx.reserve(6000);
-            // #pragma omp parallel for
-            for (MVS_DTYPE i = 0; i < *num_mvs; ++i) {
-                if (mvs[i].src_x != mvs[i].dst_x || mvs[i].src_y != mvs[i].dst_y){
-                    // #pragma omp critical
-                    nonzero_idx.push_back(i);
-                }
-            }
-            *num_mvs = nonzero_idx.size();
-
-            // allocate memory for motion vectors as 1D array
-            if (!(*motion_vectors = (MVS_DTYPE *) malloc(*num_mvs * MV_ELEMS * sizeof(MVS_DTYPE))))
-                return false;
-
-            // store the motion vectors in the allocated memory (C contiguous)
-            for(MVS_DTYPE idx=0; idx < *num_mvs; idx++){
-                MVS_DTYPE i = nonzero_idx[idx];
-                *(*motion_vectors + idx*MV_ELEMS     ) = static_cast<MVS_DTYPE>(mvs[i].source);
-                *(*motion_vectors + idx*MV_ELEMS +  1) = static_cast<MVS_DTYPE>(mvs[i].w);
-                *(*motion_vectors + idx*MV_ELEMS +  2) = static_cast<MVS_DTYPE>(mvs[i].h);
-                *(*motion_vectors + idx*MV_ELEMS +  3) = static_cast<MVS_DTYPE>(mvs[i].src_x);
-                *(*motion_vectors + idx*MV_ELEMS +  4) = static_cast<MVS_DTYPE>(mvs[i].src_y);
-                *(*motion_vectors + idx*MV_ELEMS +  5) = static_cast<MVS_DTYPE>(mvs[i].dst_x);
-                *(*motion_vectors + idx*MV_ELEMS +  6) = static_cast<MVS_DTYPE>(mvs[i].dst_y);
-            }
-        }
-    }
-
     // get frame type (I, P, B, etc.) and create a null terminated c-string
     frame_type[0] = av_get_picture_type_char(this->frame->pict_type);
     frame_type[1] = '\0';
 
-    // return the timestamp which was computed previously in grab()
-    *frame_timestamp = this->frame_timestamp;
-
     return true;
 }
 
-bool VideoCap::read(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp) {
+bool VideoCap::read(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type) {
     bool ret = this->grab();
     if (ret)
-        ret = this->retrieve(frame, step, width, height, cn, frame_type, motion_vectors, num_mvs, frame_timestamp);
+        ret = this->retrieve(frame, step, width, height, cn, frame_type);
     return ret;
 }
 
-bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, double *frame_timestamp) {
+bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs) {
 
     if (!this->video_stream || !(this->frame->data[0]))
         return false;
@@ -469,16 +422,14 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
     // Set return value to running_mv_sum
     *accumulated_mv = this->running_mv_sum;
     Py_INCREF(*accumulated_mv);
-    // return the timestamp which was computed previously in grab()
-    *frame_timestamp = this->frame_timestamp;
 
     return true;
 }
 
-bool VideoCap::read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, double *frame_timestamp) {
+bool VideoCap::read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs) {
     bool ret = this->grab();
     if (ret)
-        ret = this->accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs, frame_timestamp);
+        ret = this->accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs);
     return ret;
 }
 

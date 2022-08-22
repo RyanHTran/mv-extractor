@@ -8,31 +8,6 @@ import cv2
 
 from mv_extractor import VideoCap
 
-def get_clipped_corners(coords, xmax, ymax):
-    ''' Clips coords between 0 and respective max value
-    Args:
-        coords: (N, 4) where last dim is [x1, y1, x2, y2]
-    '''
-    x1, y1, x2, y2 = np.split(coords, 4, axis=1)
-    np.clip(x1, 0, xmax, out=x1)
-    np.clip(x2, 0, xmax, out=x2)
-    np.clip(y1, 0, ymax, out=y1)
-    np.clip(y2, 0, ymax, out=y2)
-
-    return np.concatenate((x1, y1, x2, y2), axis=1)
-
-def isnt_clipped(corners, width, height):
-    '''
-    Args:
-        corners: (N, 4) where last dim is [x1, y1, x2, y2]
-        width: (N,)
-        height: (N,)
-    Returns:
-        ndarray (N,) where corner has not been clipped
-    '''
-    return np.logical_and((corners[:, 2] - corners[:, 0]) == width,
-        (corners[:, 3] - corners[:, 1]) == height)
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Extract motion vectors from video.')
     parser.add_argument('video_url', type=str, nargs='?', default="cam2_2.mp4", help='File path or url of the video stream')
@@ -61,7 +36,7 @@ if __name__ == "__main__":
             print("Frame: ", step, end=" ")
 
         # read next video frame and corresponding motion vectors
-        ret, frame, motion_vectors, frame_type, timestamp = cap.read_accumulate()
+        ret, frame, motion_vectors, frame_type = cap.read_accumulate()
         # if there is an error reading the frame
         if not ret:
             if args.verbose:
@@ -101,7 +76,6 @@ if __name__ == "__main__":
 
         # print results
         if args.verbose:
-            print("timestamp: {} | ".format(timestamp), end=" ")
             print("frame type: {} | ".format(frame_type), end=" ")
 
             print("frame size: {} | ".format(np.shape(frame)), end=" ")
