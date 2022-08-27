@@ -36,7 +36,7 @@ if __name__ == "__main__":
             print("Frame: ", step, end=" ")
 
         # read next video frame and corresponding motion vectors
-        ret, frame, motion_vectors, frame_type = cap.read_accumulate()
+        ret, frame, motion_vectors, frame_type, gop_idx, gop_pos = cap.read_accumulate()
         # if there is an error reading the frame
         if not ret:
             if args.verbose:
@@ -44,13 +44,6 @@ if __name__ == "__main__":
             break
 
         frame_height, frame_width = frame.shape[0], frame.shape[1]
-
-        if args.dump or args.verify:
-            if frame_type == 'I':
-                gop_idx += 1
-                gop_pos = 0
-            else:
-                gop_pos += 1
 
         if args.verify:
             # Check motion vectors
@@ -76,6 +69,7 @@ if __name__ == "__main__":
 
         # print results
         if args.verbose:
+            print("({}, {})".format(gop_idx, gop_pos), step, end=" ")
             print("frame type: {} | ".format(frame_type), end=" ")
 
             print("frame size: {} | ".format(np.shape(frame)), end=" ")

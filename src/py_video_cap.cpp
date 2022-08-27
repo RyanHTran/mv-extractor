@@ -47,55 +47,55 @@ VideoCap_grab(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 static PyObject *
 VideoCap_retrieve(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
-    uint8_t *frame = NULL;
+    PyArrayObject *frame = NULL;
     int width = 0;
     int height = 0;
     int step = 0;
     int cn = 0;
+    int gop_idx = -1;
+    int gop_pos = 0;
 
     char frame_type[2] = "?";
 
     PyObject *ret = Py_True;
 
-    if (!self->vcap.retrieve(&frame, &step, &width, &height, &cn, frame_type)) {
+    if (!self->vcap.retrieve(&frame, &step, &width, &height, &cn, frame_type, &gop_idx, &gop_pos)) {
         width = 0;
         height = 0;
         step = 0;
         cn = 0;
+        frame = (PyArrayObject *)Py_None;
         ret = Py_False;
     }
 
-    npy_intp dims[3] = {height, width, cn};
-    PyObject* frame_nd = PyArray_SimpleNewFromData(3, dims, NPY_UINT8, frame);
-
-    return Py_BuildValue("(ONs)", ret, frame_nd, (const char*)frame_type);
+    return Py_BuildValue("(ONsii)", ret, frame, (const char*)frame_type, gop_idx, gop_pos);
 }
 
 static PyObject *
 VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
-    uint8_t *frame = NULL;
+    PyArrayObject *frame = NULL;
     int width = 0;
     int height = 0;
     int step = 0;
     int cn = 0;
+    int gop_idx = -1;
+    int gop_pos = 0;
 
     char frame_type[2] = "?";
 
     PyObject *ret = Py_True;
 
-    if (!self->vcap.read(&frame, &step, &width, &height, &cn, frame_type)) {
+    if (!self->vcap.read(&frame, &step, &width, &height, &cn, frame_type, &gop_idx, &gop_pos)) {
         width = 0;
         height = 0;
         step = 0;
         cn = 0;
+        frame = (PyArrayObject *)Py_None;
         ret = Py_False;
     }
 
-    npy_intp dims[3] = {height, width, cn};
-    PyObject* frame_nd = PyArray_SimpleNewFromData(3, dims, NPY_UINT8, frame);
-
-    return Py_BuildValue("(ONs)", ret, frame_nd, (const char*)frame_type);
+    return Py_BuildValue("(ONsii)", ret, frame, (const char*)frame_type, gop_idx, gop_pos);
 }
 
 static PyObject *
@@ -106,6 +106,8 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     int height = 0;
     int step = 0;
     int cn = 0;
+    int gop_idx = -1;
+    int gop_pos = 0;
 
     PyArrayObject *accumulated_mv = NULL;
     MVS_DTYPE num_mvs = 0;
@@ -113,7 +115,7 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 
     PyObject *ret = Py_True;
     
-    if (!self->vcap.read_accumulate(&frame, &step, &width, &height, &cn, frame_type, &accumulated_mv, &num_mvs)) {
+    if (!self->vcap.read_accumulate(&frame, &step, &width, &height, &cn, frame_type, &accumulated_mv, &num_mvs, &gop_idx, &gop_pos)) {
         width = 0;
         height = 0;
         step = 0;
@@ -125,7 +127,7 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     npy_intp dims[3] = {height, width, cn};
     PyObject* frame_nd = PyArray_SimpleNewFromData(3, dims, NPY_UINT8, frame);
 
-    return Py_BuildValue("(ONNs)", ret, frame_nd, accumulated_mv, (const char*)frame_type);
+    return Py_BuildValue("(ONNsii)", ret, frame_nd, accumulated_mv, (const char*)frame_type, gop_idx, gop_pos);
 }
 
 

@@ -74,6 +74,8 @@ private:
     PyArrayObject *running_mv_sum;
     int *prev_locations;
     int *curr_locations;
+    int gop_idx;
+    int gop_pos;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif
@@ -178,16 +180,16 @@ public:
     * @retval true if the grabbed video frame and motion vectors could be
     *    decoded and returned successfully, false otherwise.
     */
-    bool retrieve(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type);
+    bool retrieve(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
     
     /** Convenience wrapper which combines a call of `grab` and `retrieve`.
     *
     *   The parameters and return value correspond to the `retrieve` method.
     */
-    bool read(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type);
+    bool read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
 
     // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
-    bool accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs);
+    bool accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
 
-    bool read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs);
+    bool read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
 };
