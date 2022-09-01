@@ -24,11 +24,12 @@ static PyObject *
 VideoCap_open(VideoCapObject *self, PyObject *args)
 {
     const char *url;
+    int frame_type;
 
-    if (!PyArg_ParseTuple(args, "s", &url))
+    if (!PyArg_ParseTuple(args, "sC", &url, &frame_type))
         Py_RETURN_FALSE;
 
-    if (!self->vcap.open(url))
+    if (!self->vcap.open(url, (char)frame_type))
         Py_RETURN_FALSE;
 
     Py_RETURN_TRUE;

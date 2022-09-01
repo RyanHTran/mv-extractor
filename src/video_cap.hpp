@@ -76,6 +76,7 @@ private:
     int *curr_locations;
     int gop_idx;
     int gop_pos;
+    char frame_type;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif
@@ -114,7 +115,7 @@ public:
     * @retval true if video file or url could be opened sucessfully, false
     *     otherwise.
     */
-    bool open(const char *url);
+    bool open(const char *url, char frame_type);
 
     /** Reads the next video frame and motion vectors from the stream
     *
