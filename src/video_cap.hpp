@@ -77,6 +77,7 @@ private:
     int gop_idx;
     int gop_pos;
     char frame_type;
+    int mv_res_reduction;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif

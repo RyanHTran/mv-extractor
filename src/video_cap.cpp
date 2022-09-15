@@ -2,6 +2,13 @@
 
 #include "video_cap.hpp"
 #include <vector>
+#include <unordered_set>
+
+struct int_pair_hash {
+    inline std::size_t operator()(const std::pair<int,int> & v) const {
+        return v.first*31+v.second;
+    }
+};
 
 VideoCap::VideoCap() {
     this->opts = NULL;
@@ -20,6 +27,7 @@ VideoCap::VideoCap() {
     this->gop_idx = -1;
     this->gop_pos = 0;
     this->frame_type = 'A';
+    this->mv_res_reduction = 2;
 
     memset(&(this->rgb_frame), 0, sizeof(this->rgb_frame));
     memset(&(this->picture), 0, sizeof(this->picture));
@@ -83,6 +91,7 @@ void VideoCap::release(void) {
     this->gop_idx = -1;
     this->gop_pos = 0;
     this->frame_type = 'A';
+    this->mv_res_reduction = 2;
 }
 
 
@@ -422,6 +431,8 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
                 val_x = mv->dst_x - mv->src_x;
                 val_y = mv->dst_y - mv->src_y;
                 // assert(mv->source == -1);
+                int write_x, write_y;
+                std::unordered_set<std::pair<int, int>,  int_pair_hash> already_written;
 
                 if (val_x != 0 || val_y != 0) {
                     for (int x_start = (-1 * mv->w / 2); x_start < mv->w / 2; ++x_start) {
@@ -444,11 +455,15 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
                                 original_y = this->prev_locations[p_src_x * (*height) * 2 + p_src_y * 2 + 1];
                                 this->curr_locations[p_dst_x * (*height) * 2 + p_dst_y * 2 + 1] = original_y;
                                 
-                                // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
-                                // #pragma omp atomic update
-                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
-                                // #pragma omp atomic update
-                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
+                                write_x = original_x / this->mv_res_reduction;
+                                write_y = original_y / this->mv_res_reduction;
+                                if (already_written.emplace(write_x, write_y).second){
+                                    // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
+                                    // #pragma omp atomic update
+                                    *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, write_y, write_x, 0)) += val_x;
+                                    // #pragma omp atomic update
+                                    *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, write_y, write_x, 1)) += val_y;
+                                }
                             }
                         }
                     }
@@ -517,7 +532,7 @@ void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, PyAr
     memcpy(*curr_locations, *prev_locations, h * w * 2 * sizeof(int));
 
     if (*running_mv_sum == NULL){
-        npy_intp dims[3] = {h, w, 2};
+        npy_intp dims[3] = {h / this->mv_res_reduction, w / this->mv_res_reduction, 2};
         *running_mv_sum = (PyArrayObject *)PyArray_ZEROS(3, dims, NPY_INT16, 0);
     } else{
         // Set running_mv_sum to 0
