@@ -2,13 +2,6 @@
 
 #include "video_cap.hpp"
 #include <vector>
-#include <unordered_set>
-
-struct int_pair_hash {
-    inline std::size_t operator()(const std::pair<int,int> & v) const {
-        return v.first*31+v.second;
-    }
-};
 
 VideoCap::VideoCap() {
     this->opts = NULL;
@@ -27,7 +20,7 @@ VideoCap::VideoCap() {
     this->gop_idx = -1;
     this->gop_pos = 0;
     this->frame_type = 'A';
-    this->mv_res_reduction = 2;
+    this->mv_res_reduction = 8;
 
     memset(&(this->rgb_frame), 0, sizeof(this->rgb_frame));
     memset(&(this->picture), 0, sizeof(this->picture));
@@ -91,7 +84,7 @@ void VideoCap::release(void) {
     this->gop_idx = -1;
     this->gop_pos = 0;
     this->frame_type = 'A';
-    this->mv_res_reduction = 2;
+    this->mv_res_reduction = 8;
 }
 
 
@@ -424,6 +417,9 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
             int original_x, original_y;
             const AVMotionVector *mvs = (const AVMotionVector *)sd->data;
 
+            int mv_width = *width / this->mv_res_reduction;
+            int mv_height = *height / this->mv_res_reduction;
+
             #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
             private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
             for (int i = 0; i < sd->size / sizeof(*mvs); i++) {
@@ -431,45 +427,39 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
                 val_x = mv->dst_x - mv->src_x;
                 val_y = mv->dst_y - mv->src_y;
                 // assert(mv->source == -1);
-                int write_x, write_y;
-                std::unordered_set<std::pair<int, int>,  int_pair_hash> already_written;
 
                 if (val_x != 0 || val_y != 0) {
-                    for (int x_start = (-1 * mv->w / 2); x_start < mv->w / 2; ++x_start) {
-                        for (int y_start = (-1 * mv->h / 2); y_start < mv->h / 2; ++y_start) {
-                            p_dst_x = mv->dst_x + x_start;
-                            p_dst_y = mv->dst_y + y_start;
+                    for (int x_start = 0; x_start < mv->w / this->mv_res_reduction; ++x_start) {
+                        for (int y_start = 0; y_start < mv->h / this->mv_res_reduction; ++y_start) {
+                            p_dst_x = mv->dst_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
+                            p_dst_y = mv->dst_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
 
-                            p_src_x = mv->src_x + x_start;
-                            p_src_y = mv->src_y + y_start;
+                            p_src_x = mv->src_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
+                            p_src_y = mv->src_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
 
-                            if (p_dst_y >= 0 && p_dst_y < *height && 
-                                p_dst_x >= 0 && p_dst_x < *width &&
-                                p_src_y >= 0 && p_src_y < *height && 
-                                p_src_x >= 0 && p_src_x < *width) {
+                            if (p_dst_y >= 0 && p_dst_y < mv_height && 
+                                p_dst_x >= 0 && p_dst_x < mv_width &&
+                                p_src_y >= 0 && p_src_y < mv_height && 
+                                p_src_x >= 0 && p_src_x < mv_width) {
                                 
                                 // Shift macroblock in curr_locations
-                                original_x = this->prev_locations[p_src_x * (*height) * 2 + p_src_y * 2];
-                                this->curr_locations[p_dst_x * (*height) * 2 + p_dst_y * 2] = original_x;
+                                original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
+                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
                                 
-                                original_y = this->prev_locations[p_src_x * (*height) * 2 + p_src_y * 2 + 1];
-                                this->curr_locations[p_dst_x * (*height) * 2 + p_dst_y * 2 + 1] = original_y;
+                                original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
+                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
                                 
-                                write_x = original_x / this->mv_res_reduction;
-                                write_y = original_y / this->mv_res_reduction;
-                                if (already_written.emplace(write_x, write_y).second){
-                                    // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
-                                    // #pragma omp atomic update
-                                    *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, write_y, write_x, 0)) += val_x;
-                                    // #pragma omp atomic update
-                                    *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, write_y, write_x, 1)) += val_y;
-                                }
+                                // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
+                                // #pragma omp atomic update
+                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
+                                // #pragma omp atomic update
+                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
                             }
                         }
                     }
                 }
             }
-            memcpy(this->prev_locations, this->curr_locations, (*width) * (*height) * 2 * sizeof(int));
+            memcpy(this->prev_locations, this->curr_locations, mv_width * mv_height * 2 * sizeof(int));
         }
     }
     
@@ -513,7 +503,10 @@ bool VideoCap::check_format_rtsp(const char *format_names) {
  * Resets running_mv_sum to 0.
  * Allocates arrays if they do not yet exist.
  */
-void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int w, int h) {
+void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int width, int height) {
+    int h = height / this->mv_res_reduction;
+    int w = width / this->mv_res_reduction;
+
     if (*prev_locations == NULL){
         *prev_locations = (int*) malloc(w * h * 2 * sizeof(int));
     }
@@ -532,7 +525,7 @@ void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, PyAr
     memcpy(*curr_locations, *prev_locations, h * w * 2 * sizeof(int));
 
     if (*running_mv_sum == NULL){
-        npy_intp dims[3] = {h / this->mv_res_reduction, w / this->mv_res_reduction, 2};
+        npy_intp dims[3] = {h, w, 2};
         *running_mv_sum = (PyArrayObject *)PyArray_ZEROS(3, dims, NPY_INT16, 0);
     } else{
         // Set running_mv_sum to 0
