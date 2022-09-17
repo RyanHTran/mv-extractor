@@ -19,7 +19,7 @@ if __name__ == "__main__":
     cap = VideoCap()
 
     # open the video file
-    ret = cap.open(args.video_url, 'P')
+    ret = cap.open(args.video_url, 'A')
 
     if not ret:
         raise RuntimeError(f"Could not open {args.video_url}")
@@ -66,6 +66,7 @@ if __name__ == "__main__":
         if args.dump:
             save_path = os.path.join('out', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
             np.savez_compressed(save_path, (motion_vectors).astype(np.int16))
+            cv2.imwrite(os.path.join(f"out", "iframe", '{}_{}.png'.format(gop_idx, gop_pos)), frame)
 
         # print results
         if args.verbose:

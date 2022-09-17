@@ -259,20 +259,15 @@ bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *heigh
     }
 
     if (this->img_convert_ctx == NULL ||
-        this->picture.width != this->video_dec_ctx->width ||
-        this->picture.height != this->video_dec_ctx->height ||
+        // this->picture.width != this->video_dec_ctx->width ||
+        // this->picture.height != this->video_dec_ctx->height ||
         this->picture.data == NULL) {
-
-        // Some sws_scale optimizations have some assumptions about alignment of data/step/width/height
-        // Also we use coded_width/height to workaround problem with legacy ffmpeg versions (like n0.8)
-        int buffer_width = this->video_dec_ctx->coded_width;
-        int buffer_height = this->video_dec_ctx->coded_height;
 
         this->img_convert_ctx = sws_getCachedContext(
                 this->img_convert_ctx,
-                buffer_width, buffer_height,
+                this->video_dec_ctx->width, this->video_dec_ctx->height,
                 this->video_dec_ctx->pix_fmt,
-                buffer_width, buffer_height,
+                512, 512,
                 AV_PIX_FMT_BGR24,
                 SWS_BICUBIC,
                 NULL, NULL, NULL
@@ -283,13 +278,13 @@ bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *heigh
 
         av_frame_unref(&(this->rgb_frame));
         this->rgb_frame.format = AV_PIX_FMT_BGR24;
-        this->rgb_frame.width = buffer_width;
-        this->rgb_frame.height = buffer_height;
-        if (0 != av_frame_get_buffer(&(this->rgb_frame), 32))
+        this->rgb_frame.width = 512;
+        this->rgb_frame.height = 512;
+        if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
             return false;
 
-        this->picture.width = this->video_dec_ctx->width;
-        this->picture.height = this->video_dec_ctx->height;
+        this->picture.width = this->rgb_frame.width;
+        this->picture.height = this->rgb_frame.height;
         this->picture.data = this->rgb_frame.data[0];
         this->picture.step = this->rgb_frame.linesize[0];
         this->picture.cn = 3;
@@ -300,7 +295,7 @@ bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *heigh
         this->img_convert_ctx,
         this->frame->data,
         this->frame->linesize,
-        0, this->video_dec_ctx->coded_height,
+        0, this->video_dec_ctx->height,
         this->rgb_frame.data,
         this->rgb_frame.linesize
         );
@@ -352,20 +347,15 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
     }
 
     if (this->img_convert_ctx == NULL ||
-        this->picture.width != this->video_dec_ctx->width ||
-        this->picture.height != this->video_dec_ctx->height ||
+        this->picture.width != this->video_dec_ctx->width / 2 ||
+        this->picture.height != this->video_dec_ctx->height / 2 ||
         this->picture.data == NULL) {
-
-        // Some sws_scale optimizations have some assumptions about alignment of data/step/width/height
-        // Also we use coded_width/height to workaround problem with legacy ffmpeg versions (like n0.8)
-        int buffer_width = this->video_dec_ctx->coded_width;
-        int buffer_height = this->video_dec_ctx->coded_height;
 
         this->img_convert_ctx = sws_getCachedContext(
                 this->img_convert_ctx,
-                buffer_width, buffer_height,
+                this->video_dec_ctx->width, this->video_dec_ctx->height,
                 this->video_dec_ctx->pix_fmt,
-                buffer_width, buffer_height,
+                this->video_dec_ctx->width / 2, this->video_dec_ctx->height / 2,
                 AV_PIX_FMT_BGR24,
                 SWS_BICUBIC,
                 NULL, NULL, NULL
@@ -376,13 +366,13 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
 
         av_frame_unref(&(this->rgb_frame));
         this->rgb_frame.format = AV_PIX_FMT_BGR24;
-        this->rgb_frame.width = buffer_width;
-        this->rgb_frame.height = buffer_height;
-        if (0 != av_frame_get_buffer(&(this->rgb_frame), 32))
+        this->rgb_frame.width = this->video_dec_ctx->width / 2;
+        this->rgb_frame.height = this->video_dec_ctx->height / 2;
+        if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
             return false;
 
-        this->picture.width = this->video_dec_ctx->width;
-        this->picture.height = this->video_dec_ctx->height;
+        this->picture.width = this->rgb_frame.width;
+        this->picture.height = this->rgb_frame.height;
         this->picture.data = this->rgb_frame.data[0];
         this->picture.step = this->rgb_frame.linesize[0];
         this->picture.cn = 3;
@@ -393,7 +383,7 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
         this->img_convert_ctx,
         this->frame->data,
         this->frame->linesize,
-        0, this->video_dec_ctx->coded_height,
+        0, this->video_dec_ctx->height,
         this->rgb_frame.data,
         this->rgb_frame.linesize
         );
@@ -417,8 +407,8 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
             int original_x, original_y;
             const AVMotionVector *mvs = (const AVMotionVector *)sd->data;
 
-            int mv_width = *width / this->mv_res_reduction;
-            int mv_height = *height / this->mv_res_reduction;
+            int mv_width = this->video_dec_ctx->width / this->mv_res_reduction;
+            int mv_height = this->video_dec_ctx->height / this->mv_res_reduction;
 
             #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
             private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
