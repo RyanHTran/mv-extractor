@@ -21,6 +21,7 @@ VideoCap::VideoCap() {
     this->gop_pos = 0;
     this->frame_type = 'A';
     this->mv_res_reduction = 8;
+    this->iframe_res_reduction = 1;
 
     memset(&(this->rgb_frame), 0, sizeof(this->rgb_frame));
     memset(&(this->picture), 0, sizeof(this->picture));
@@ -85,10 +86,11 @@ void VideoCap::release(void) {
     this->gop_pos = 0;
     this->frame_type = 'A';
     this->mv_res_reduction = 8;
+    this->iframe_res_reduction = 1;
 }
 
 
-bool VideoCap::open(const char *url, char frame_type) {
+bool VideoCap::open(const char *url, char frame_type, int iframe_res_reduction, int mv_res_reduction) {
 
     bool valid = false;
     AVStream *st = NULL;
@@ -163,6 +165,9 @@ bool VideoCap::open(const char *url, char frame_type) {
     if (frame_type == 'I'){
         this->video_dec_ctx->skip_frame = AVDISCARD_NONKEY;
     }
+
+    this->iframe_res_reduction = iframe_res_reduction;
+    this->mv_res_reduction = mv_res_reduction;
     
     // print info (duration, bitrate, streams, container, programs, metadata, side data, codec, time base)
 #ifdef DEBUG
@@ -347,15 +352,15 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
     }
 
     if (this->img_convert_ctx == NULL ||
-        this->picture.width != this->video_dec_ctx->width / 2 ||
-        this->picture.height != this->video_dec_ctx->height / 2 ||
+        this->picture.width != this->video_dec_ctx->width / this->iframe_res_reduction ||
+        this->picture.height != this->video_dec_ctx->height / this->iframe_res_reduction ||
         this->picture.data == NULL) {
 
         this->img_convert_ctx = sws_getCachedContext(
                 this->img_convert_ctx,
                 this->video_dec_ctx->width, this->video_dec_ctx->height,
                 this->video_dec_ctx->pix_fmt,
-                this->video_dec_ctx->width / 2, this->video_dec_ctx->height / 2,
+                this->video_dec_ctx->width / this->iframe_res_reduction, this->video_dec_ctx->height / this->iframe_res_reduction,
                 AV_PIX_FMT_BGR24,
                 SWS_BICUBIC,
                 NULL, NULL, NULL
@@ -366,8 +371,8 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
 
         av_frame_unref(&(this->rgb_frame));
         this->rgb_frame.format = AV_PIX_FMT_BGR24;
-        this->rgb_frame.width = this->video_dec_ctx->width / 2;
-        this->rgb_frame.height = this->video_dec_ctx->height / 2;
+        this->rgb_frame.width = this->video_dec_ctx->width / this->iframe_res_reduction;
+        this->rgb_frame.height = this->video_dec_ctx->height / this->iframe_res_reduction;
         if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
             return false;
 

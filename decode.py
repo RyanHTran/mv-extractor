@@ -19,7 +19,7 @@ if __name__ == "__main__":
     cap = VideoCap()
 
     # open the video file
-    ret = cap.open(args.video_url, 'A')
+    ret = cap.open(args.video_url, 'A', 1, 1)
 
     if not ret:
         raise RuntimeError(f"Could not open {args.video_url}")
@@ -37,6 +37,7 @@ if __name__ == "__main__":
 
         # read next video frame and corresponding motion vectors
         ret, frame, motion_vectors, frame_type, gop_idx, gop_pos = cap.read_accumulate()
+
         # if there is an error reading the frame
         if not ret:
             if args.verbose:
@@ -66,7 +67,7 @@ if __name__ == "__main__":
         if args.dump:
             save_path = os.path.join('out', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
             np.savez_compressed(save_path, (motion_vectors).astype(np.int16))
-            cv2.imwrite(os.path.join(f"out", "iframe", '{}_{}.png'.format(gop_idx, gop_pos)), frame)
+            cv2.imwrite(os.path.join(f"out", "iframe", '{}_{}.jpg'.format(gop_idx, gop_pos)), frame)
 
         # print results
         if args.verbose:
@@ -76,7 +77,7 @@ if __name__ == "__main__":
             print("frame size: {} | ".format(np.shape(frame)), end=" ")
             print("motion vectors: {}".format(np.shape(motion_vectors)))
 
-        cv2.imwrite(os.path.join(f"out", "bgr", f"frame-{step}.bmp"), frame)
+        # cv2.imwrite(os.path.join(f"out", "bgr", f"frame-{step}.bmp"), frame)
 
         step += 1
 
