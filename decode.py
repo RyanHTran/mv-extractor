@@ -78,6 +78,9 @@ if __name__ == "__main__":
             print("motion vectors: {}".format(np.shape(motion_vectors)))
 
         # cv2.imwrite(os.path.join(f"out", "bgr", f"frame-{step}.bmp"), frame)
+        pad = np.expand_dims(np.zeros_like(motion_vectors[:,:,0]), axis=2)
+        mv_visualization = np.append(motion_vectors * 20, pad, axis=2)
+        cv2.imwrite(os.path.join('out', 'tmp', '{}_{}.jpg'.format(gop_idx, gop_pos)), np.abs(mv_visualization))
 
         step += 1
 

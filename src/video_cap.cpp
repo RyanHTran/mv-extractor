@@ -398,7 +398,7 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
     *height = this->picture.height;
     *step = this->picture.step;
     *cn = this->picture.cn;
-
+    
     // get motion vectors
     AVFrameSideData *sd = av_frame_get_side_data(this->frame, AV_FRAME_DATA_MOTION_VECTORS);
     if (sd) {
@@ -407,6 +407,8 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
         *num_mvs = sd->size / sizeof(*mvs);
 
         if (*num_mvs > 0) {
+            PyArray_FILLWBYTE(this->running_mv_sum, 0);
+            
             int p_dst_x, p_dst_y, p_src_x, p_src_y;
             int val_x, val_y;
             int original_x, original_y;
@@ -438,23 +440,25 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
                                 p_src_x >= 0 && p_src_x < mv_width) {
                                 
                                 // Shift macroblock in curr_locations
-                                original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
-                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
+                                // original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
+                                // this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
                                 
-                                original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
-                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
+                                // original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
+                                // this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
+                                original_x = p_src_x;
+                                original_y = p_src_y;
                                 
                                 // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
-                                // #pragma omp atomic update
+                                #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
-                                // #pragma omp atomic update
+                                #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
                             }
                         }
                     }
                 }
             }
-            memcpy(this->prev_locations, this->curr_locations, mv_width * mv_height * 2 * sizeof(int));
+            // memcpy(this->prev_locations, this->curr_locations, mv_width * mv_height * 2 * sizeof(int));
         }
     }
     
