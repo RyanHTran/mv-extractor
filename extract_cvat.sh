@@ -7,6 +7,6 @@ do
     mkdir out/mv
     mkdir out/iframe
     python decode.py $train_dir$video_name".mp4" --dump
-    mv out/mv/ $train_dir$video_name
-    mv out/iframe/ $train_dir$video_name
+    mv out/mv/ $train_dir$video_name"/unaccumulated"
+    mv out/iframe/ $train_dir$video_name"/unaccumulated"
 done
