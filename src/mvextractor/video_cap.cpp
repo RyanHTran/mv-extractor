@@ -1,5 +1,7 @@
-#include "video_cap.hpp"
+#define NO_IMPORT_ARRAY
 
+#include "video_cap.hpp"
+#include <vector>
 
 VideoCap::VideoCap() {
     this->opts = NULL;
@@ -11,8 +13,15 @@ VideoCap::VideoCap() {
     this->frame = NULL;
     this->img_convert_ctx = NULL;
     this->frame_number = 0;
-    this->frame_timestamp = 0.0;
     this->is_rtsp = false;
+    this->running_mv_sum = NULL;
+    this->prev_locations = NULL;
+    this->curr_locations = NULL;
+    this->gop_idx = -1;
+    this->gop_pos = 0;
+    this->frame_type = 'A';
+    this->mv_res_reduction = 8;
+    this->iframe_res_reduction = 1;
 
     memset(&(this->rgb_frame), 0, sizeof(this->rgb_frame));
     memset(&(this->picture), 0, sizeof(this->picture));
@@ -62,12 +71,26 @@ void VideoCap::release(void) {
     this->video_stream = NULL;
     this->video_stream_idx = -1;
     this->frame_number = 0;
-    this->frame_timestamp = 0.0;
     this->is_rtsp = false;
+
+    Py_CLEAR(this->running_mv_sum);
+    if (this->prev_locations != NULL){
+        free(this->prev_locations);
+        this->prev_locations = NULL;
+    }
+    if (this->curr_locations != NULL){
+        free(this->curr_locations);
+        this->curr_locations = NULL;
+    }
+    this->gop_idx = -1;
+    this->gop_pos = 0;
+    this->frame_type = 'A';
+    this->mv_res_reduction = 8;
+    this->iframe_res_reduction = 1;
 }
 
 
-bool VideoCap::open(const char *url) {
+bool VideoCap::open(const char *url, char frame_type, int iframe_res_reduction, int mv_res_reduction) {
 
     bool valid = false;
     AVStream *st = NULL;
@@ -88,7 +111,7 @@ bool VideoCap::open(const char *url) {
         goto error;
 
     // determine if opened stream is RTSP or not (e.g. a video file)
-    this->is_rtsp = check_format_rtsp(this->fmt_ctx->iformat->name);
+    // this->is_rtsp = check_format_rtsp(this->fmt_ctx->iformat->name);
 
     // read packets of a media file to get stream information.
     if (avformat_find_stream_info(this->fmt_ctx, NULL) < 0)
@@ -114,7 +137,7 @@ bool VideoCap::open(const char *url) {
 
     this->video_dec_ctx->thread_count = std::thread::hardware_concurrency();
 #ifdef DEBUG
-    std::cerr << "Using parallel processing with " << this->video_dec_ctx->thread_count << " threads" << std::endl;
+    std::cout << "Using parallel processing with " << this->video_dec_ctx->thread_count << " threads" << std::endl;
 #endif
 
     // backup encoder's width/height
@@ -137,7 +160,15 @@ bool VideoCap::open(const char *url) {
     this->picture.width = this->video_dec_ctx->width;
     this->picture.height = this->video_dec_ctx->height;
     this->picture.data = NULL;
+    
+    this->frame_type = frame_type;
+    if (frame_type == 'I'){
+        this->video_dec_ctx->skip_frame = AVDISCARD_NONKEY;
+    }
 
+    this->iframe_res_reduction = iframe_res_reduction;
+    this->mv_res_reduction = mv_res_reduction;
+    
     // print info (duration, bitrate, streams, container, programs, metadata, side data, codec, time base)
 #ifdef DEBUG
     av_dump_format(this->fmt_ctx, 0, url, 0);
@@ -199,42 +230,8 @@ bool VideoCap::grab(void) {
         avcodec_decode_video2(this->video_dec_ctx, this->frame, &got_frame, &(this->packet));
 
         if(got_frame) {
-#ifdef DEBUG
-            // get timestamps of packet from RTPS stream
-            std::cerr << "### Frame No. " <<  this->frame_number << " ###" << std::endl;
-            std::cerr << "synced: " << packet.synced << std::endl;
-            std::cerr << "seq: " << packet.seq << std::endl;
-            std::cerr << "timestamp: " << packet.timestamp << std::endl;
-            std::cerr << "last_rtcp_ntp_time (NTP): " << packet.last_rtcp_ntp_time << std::endl;
-            struct timeval last_rtcp_ntp_time_unix;
-            ntp2tv(&packet.last_rtcp_ntp_time, &last_rtcp_ntp_time_unix);
-            std::cerr << "last_rtcp_ntp_time (UNIX): ";
-            printf("%ld.%06ld\n", last_rtcp_ntp_time_unix.tv_sec, last_rtcp_ntp_time_unix.tv_usec);
-            std::cerr << "last_rtcp_timestamp: " << packet.last_rtcp_timestamp << std::endl;
-#endif
-
-            // wait for the first RTCP sender report containing RTP timestamp <-> NTP walltime mapping,
-            // before this no reliable frame timestmap can be computed
-            if (this->is_rtsp && packet.synced) {
-                // compute absolute UNIX timestamp for each frame as follows (90 kHz clock as in RTP spec):
-                // frame_time_unix = last_rtcp_ntp_time_unix + (timestamp - last_rtcp_timestamp) / 90000
-                struct timeval tv;
-                ntp2tv(&packet.last_rtcp_ntp_time, &tv);
-                double rtp_diff = (double)(packet.timestamp - packet.last_rtcp_timestamp) / 90000.0;
-                this->frame_timestamp = (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0 + rtp_diff;
-#ifdef DEBUG
-                std::cerr << "frame_timestamp (UNIX): " << std::fixed << this->frame_timestamp << std::endl;
-#endif
-            }
-            // if no RTSP is used or no RTP timestamp <-> NTP walltime mapping is received, make timestamp from local system time
-            else {
-                auto now = std::chrono::system_clock::now();
-                this->frame_timestamp = std::chrono::duration<double>(now.time_since_epoch()).count();
-            }
-
             this->frame_number++;
             valid = true;
-
         }
         else {
             count_errs++;
@@ -247,27 +244,35 @@ bool VideoCap::grab(void) {
     return valid;
 }
 
-
-bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp) {
-
+bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos) {
     if (!this->video_stream || !(this->frame->data[0]))
         return false;
 
-    if (this->img_convert_ctx == NULL ||
-        this->picture.width != this->video_dec_ctx->width ||
-        this->picture.height != this->video_dec_ctx->height ||
-        this->picture.data == NULL) {
+    // get frame type (I, P, B, etc.) and create a null terminated c-string
+    frame_type[0] = av_get_picture_type_char(this->frame->pict_type);
+    frame_type[1] = '\0';
 
-        // Some sws_scale optimizations have some assumptions about alignment of data/step/width/height
-        // Also we use coded_width/height to workaround problem with legacy ffmpeg versions (like n0.8)
-        int buffer_width = this->video_dec_ctx->coded_width;
-        int buffer_height = this->video_dec_ctx->coded_height;
+    if (frame_type[0] == 'I'){
+        this->gop_idx += 1;
+        this->gop_pos = 0;
+    } else {
+        this->gop_pos += 1;
+    }
+
+    if (this->frame_type == 'P' && frame_type[0] != 'P'){
+        return this->read(frame, step, width, height, cn, frame_type, gop_idx, gop_pos);
+    }
+
+    if (this->img_convert_ctx == NULL ||
+        // this->picture.width != this->video_dec_ctx->width ||
+        // this->picture.height != this->video_dec_ctx->height ||
+        this->picture.data == NULL) {
 
         this->img_convert_ctx = sws_getCachedContext(
                 this->img_convert_ctx,
-                buffer_width, buffer_height,
+                this->video_dec_ctx->width, this->video_dec_ctx->height,
                 this->video_dec_ctx->pix_fmt,
-                buffer_width, buffer_height,
+                512, 512,
                 AV_PIX_FMT_BGR24,
                 SWS_BICUBIC,
                 NULL, NULL, NULL
@@ -278,13 +283,13 @@ bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int
 
         av_frame_unref(&(this->rgb_frame));
         this->rgb_frame.format = AV_PIX_FMT_BGR24;
-        this->rgb_frame.width = buffer_width;
-        this->rgb_frame.height = buffer_height;
-        if (0 != av_frame_get_buffer(&(this->rgb_frame), 32))
+        this->rgb_frame.width = 512;
+        this->rgb_frame.height = 512;
+        if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
             return false;
 
-        this->picture.width = this->video_dec_ctx->width;
-        this->picture.height = this->video_dec_ctx->height;
+        this->picture.width = this->rgb_frame.width;
+        this->picture.height = this->rgb_frame.height;
         this->picture.data = this->rgb_frame.data[0];
         this->picture.step = this->rgb_frame.linesize[0];
         this->picture.cn = 3;
@@ -295,7 +300,95 @@ bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int
         this->img_convert_ctx,
         this->frame->data,
         this->frame->linesize,
-        0, this->video_dec_ctx->coded_height,
+        0, this->video_dec_ctx->height,
+        this->rgb_frame.data,
+        this->rgb_frame.linesize
+        );
+
+    *width = this->picture.width;
+    *height = this->picture.height;
+    *step = this->picture.step;
+    *cn = this->picture.cn;
+
+    npy_intp dims[3] = {*height, *width, *cn};
+    // PyArrayObject* frame_nd = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->picture.data);
+    // *frame = (PyArrayObject *)PyArray_NewCopy(frame_nd, NPY_CORDER);
+    *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->picture.data);
+
+    *gop_idx = this->gop_idx;
+    *gop_pos = this->gop_pos;
+
+    return true;
+}
+
+bool VideoCap::read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos) {
+    bool ret = this->grab();
+    if (ret)
+        ret = this->retrieve(frame, step, width, height, cn, frame_type, gop_idx, gop_pos);
+    return ret;
+}
+
+bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos) {
+    if (!this->video_stream || !(this->frame->data[0]))
+        return false;
+
+    // get frame type (I, P, B, etc.) and create a null terminated c-string
+    frame_type[0] = av_get_picture_type_char(this->frame->pict_type);
+    frame_type[1] = '\0';
+
+    if (frame_type[0] == 'I' || this->prev_locations == NULL || this->curr_locations == NULL || this->running_mv_sum == NULL) {
+        this->reset_accumulate(&(this->prev_locations), &(this->curr_locations), &(this->running_mv_sum), this->video_dec_ctx->width, this->video_dec_ctx->height);
+    }
+
+    if (frame_type[0] == 'I'){
+        this->gop_idx += 1;
+        this->gop_pos = 0;
+    } else {
+        this->gop_pos += 1;
+    }
+
+    if (this->frame_type == 'P' && frame_type[0] != 'P'){
+        return this->read_accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs, gop_idx, gop_pos);
+    }
+
+    if (this->img_convert_ctx == NULL ||
+        this->picture.width != this->video_dec_ctx->width / this->iframe_res_reduction ||
+        this->picture.height != this->video_dec_ctx->height / this->iframe_res_reduction ||
+        this->picture.data == NULL) {
+
+        this->img_convert_ctx = sws_getCachedContext(
+                this->img_convert_ctx,
+                this->video_dec_ctx->width, this->video_dec_ctx->height,
+                this->video_dec_ctx->pix_fmt,
+                this->video_dec_ctx->width / this->iframe_res_reduction, this->video_dec_ctx->height / this->iframe_res_reduction,
+                AV_PIX_FMT_BGR24,
+                SWS_BICUBIC,
+                NULL, NULL, NULL
+                );
+
+        if (this->img_convert_ctx == NULL)
+            return false;
+
+        av_frame_unref(&(this->rgb_frame));
+        this->rgb_frame.format = AV_PIX_FMT_BGR24;
+        this->rgb_frame.width = this->video_dec_ctx->width / this->iframe_res_reduction;
+        this->rgb_frame.height = this->video_dec_ctx->height / this->iframe_res_reduction;
+        if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
+            return false;
+
+        this->picture.width = this->rgb_frame.width;
+        this->picture.height = this->rgb_frame.height;
+        this->picture.data = this->rgb_frame.data[0];
+        this->picture.step = this->rgb_frame.linesize[0];
+        this->picture.cn = 3;
+    }
+
+    // change color space of frame
+    sws_scale(
+        this->img_convert_ctx,
+        this->frame->data,
+        this->frame->linesize,
+        0, this->video_dec_ctx->height,
         this->rgb_frame.data,
         this->rgb_frame.linesize
         );
@@ -314,46 +407,73 @@ bool VideoCap::retrieve(uint8_t **frame, int *step, int *width, int *height, int
         *num_mvs = sd->size / sizeof(*mvs);
 
         if (*num_mvs > 0) {
+            int p_dst_x, p_dst_y, p_src_x, p_src_y;
+            int val_x, val_y;
+            int original_x, original_y;
+            const AVMotionVector *mvs = (const AVMotionVector *)sd->data;
 
-            // allocate memory for motion vectors as 1D array
-            if (!(*motion_vectors = (MVS_DTYPE *) malloc(*num_mvs * 10 * sizeof(MVS_DTYPE))))
-                return false;
+            int mv_width = this->video_dec_ctx->width / this->mv_res_reduction;
+            int mv_height = this->video_dec_ctx->height / this->mv_res_reduction;
 
-            // store the motion vectors in the allocated memory (C contiguous)
-            for (MVS_DTYPE i = 0; i < *num_mvs; ++i) {
-                *(*motion_vectors + i*10     ) = static_cast<MVS_DTYPE>(mvs[i].source);
-                *(*motion_vectors + i*10 +  1) = static_cast<MVS_DTYPE>(mvs[i].w);
-                *(*motion_vectors + i*10 +  2) = static_cast<MVS_DTYPE>(mvs[i].h);
-                *(*motion_vectors + i*10 +  3) = static_cast<MVS_DTYPE>(mvs[i].src_x);
-                *(*motion_vectors + i*10 +  4) = static_cast<MVS_DTYPE>(mvs[i].src_y);
-                *(*motion_vectors + i*10 +  5) = static_cast<MVS_DTYPE>(mvs[i].dst_x);
-                *(*motion_vectors + i*10 +  6) = static_cast<MVS_DTYPE>(mvs[i].dst_y);
-                *(*motion_vectors + i*10 +  7) = static_cast<MVS_DTYPE>(mvs[i].motion_x);
-                *(*motion_vectors + i*10 +  8) = static_cast<MVS_DTYPE>(mvs[i].motion_y);
-                *(*motion_vectors + i*10 +  9) = static_cast<MVS_DTYPE>(mvs[i].motion_scale);
-                //*(*motion_vectors + i*11 + 10) = static_cast<MVS_DTYPE>(mvs[i].flags);
+            #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
+            private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
+            for (int i = 0; i < sd->size / sizeof(*mvs); i++) {
+                const AVMotionVector *mv = &mvs[i];
+                val_x = mv->dst_x - mv->src_x;
+                val_y = mv->dst_y - mv->src_y;
+                // assert(mv->source == -1);
+
+                if (val_x != 0 || val_y != 0) {
+                    for (int x_start = 0; x_start < mv->w / this->mv_res_reduction; ++x_start) {
+                        for (int y_start = 0; y_start < mv->h / this->mv_res_reduction; ++y_start) {
+                            p_dst_x = mv->dst_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
+                            p_dst_y = mv->dst_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
+
+                            p_src_x = mv->src_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
+                            p_src_y = mv->src_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
+
+                            if (p_dst_y >= 0 && p_dst_y < mv_height && 
+                                p_dst_x >= 0 && p_dst_x < mv_width &&
+                                p_src_y >= 0 && p_src_y < mv_height && 
+                                p_src_x >= 0 && p_src_x < mv_width) {
+                                
+                                // Shift macroblock in curr_locations
+                                original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
+                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
+                                
+                                original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
+                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
+                                
+                                // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
+                                // #pragma omp atomic update
+                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
+                                // #pragma omp atomic update
+                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
+                            }
+                        }
+                    }
+                }
             }
+            memcpy(this->prev_locations, this->curr_locations, mv_width * mv_height * 2 * sizeof(int));
         }
     }
+    
+    // Set return value to running_mv_sum
+    *accumulated_mv = this->running_mv_sum;
+    Py_INCREF(*accumulated_mv);
 
-    // get frame type (I, P, B, etc.) and create a null terminated c-string
-    frame_type[0] = av_get_picture_type_char(this->frame->pict_type);
-    frame_type[1] = '\0';
-
-    // return the timestamp which was computed previously in grab()
-    *frame_timestamp = this->frame_timestamp;
+    *gop_idx = this->gop_idx;
+    *gop_pos = this->gop_pos;
 
     return true;
 }
 
-
-bool VideoCap::read(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp) {
+bool VideoCap::read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos) {
     bool ret = this->grab();
     if (ret)
-        ret = this->retrieve(frame, step, width, height, cn, frame_type, motion_vectors, num_mvs, frame_timestamp);
+        ret = this->accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs, gop_idx, gop_pos);
     return ret;
 }
-
 
 // Returns true if the comma-separated list of format names contains "rtsp"
 bool VideoCap::check_format_rtsp(const char *format_names) {
@@ -371,4 +491,39 @@ bool VideoCap::check_format_rtsp(const char *format_names) {
     }
 
     return false;
+}
+
+/**
+ * Resets prev_locations and curr_locations to coordinate arrays.
+ * Resets running_mv_sum to 0.
+ * Allocates arrays if they do not yet exist.
+ */
+void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int width, int height) {
+    int h = height / this->mv_res_reduction;
+    int w = width / this->mv_res_reduction;
+
+    if (*prev_locations == NULL){
+        *prev_locations = (int*) malloc(w * h * 2 * sizeof(int));
+    }
+
+    if (*curr_locations == NULL){
+        *curr_locations = (int*) malloc(w * h * 2 * sizeof(int));
+    }
+
+    #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
+    for (int x = 0; x < w; ++x) {
+        for (int y = 0; y < h; ++y) {
+            (*prev_locations)[x * h * 2 + y * 2    ]  = x;
+            (*prev_locations)[x * h * 2 + y * 2 + 1]  = y;
+        }
+    }
+    memcpy(*curr_locations, *prev_locations, h * w * 2 * sizeof(int));
+
+    if (*running_mv_sum == NULL){
+        npy_intp dims[3] = {h, w, 2};
+        *running_mv_sum = (PyArrayObject *)PyArray_ZEROS(3, dims, NPY_INT16, 0);
+    } else{
+        // Set running_mv_sum to 0
+        PyArray_FILLWBYTE(*running_mv_sum, 0);
+    }
 }

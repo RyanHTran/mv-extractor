@@ -1,6 +1,5 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include <numpy/arrayobject.h>
 #include <opencv2/core/core.hpp>
 
 #include "video_cap.hpp"
@@ -25,11 +24,14 @@ static PyObject *
 VideoCap_open(VideoCapObject *self, PyObject *args)
 {
     const char *url;
+    int frame_type;
+    int iframe_res_reduction;
+    int mv_res_reduction;
 
-    if (!PyArg_ParseTuple(args, "s", &url))
+    if (!PyArg_ParseTuple(args, "sCii", &url, &frame_type, &iframe_res_reduction, &mv_res_reduction))
         Py_RETURN_FALSE;
 
-    if (!self->vcap.open(url))
+    if (!self->vcap.open(url, (char)frame_type,  iframe_res_reduction, mv_res_reduction))
         Py_RETURN_FALSE;
 
     Py_RETURN_TRUE;
@@ -48,88 +50,87 @@ VideoCap_grab(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 static PyObject *
 VideoCap_retrieve(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
-    cv::Mat frame_cv;
-    uint8_t *frame = NULL;
+    PyArrayObject *frame = NULL;
     int width = 0;
     int height = 0;
     int step = 0;
     int cn = 0;
+    int gop_idx = -1;
+    int gop_pos = 0;
 
-    MVS_DTYPE *motion_vectors = NULL;
-    MVS_DTYPE num_mvs = 0;
     char frame_type[2] = "?";
-
-    double frame_timestamp = 0;
 
     PyObject *ret = Py_True;
 
-    if (!self->vcap.retrieve(&frame, &step, &width, &height, &cn, frame_type, &motion_vectors, &num_mvs, &frame_timestamp)) {
-        num_mvs = 0;
+    if (!self->vcap.retrieve(&frame, &step, &width, &height, &cn, frame_type, &gop_idx, &gop_pos)) {
         width = 0;
         height = 0;
         step = 0;
         cn = 0;
-        frame_timestamp = 0;
+        frame = (PyArrayObject *)Py_None;
         ret = Py_False;
     }
 
-    // copy frame buffer into new cv::Mat
-    cv::Mat(height, width, CV_MAKETYPE(CV_8U, cn), frame, step).copyTo(frame_cv);
-
-    // convert frame cv::Mat to numpy.ndarray
-    NDArrayConverter cvt;
-    PyObject* frame_nd = cvt.toNDArray(frame_cv);
-
-    // convert motion vector buffer into numpy array
-    npy_intp dims_mvs[2] = {(npy_intp)num_mvs, 10};
-    PyObject *motion_vectors_nd = PyArray_SimpleNewFromData(2, dims_mvs, MVS_DTYPE_NP, motion_vectors);
-    PyArray_ENABLEFLAGS((PyArrayObject*)motion_vectors_nd, NPY_ARRAY_OWNDATA);
-
-    return Py_BuildValue("(ONNsd)", ret, frame_nd, motion_vectors_nd, (const char*)frame_type, frame_timestamp);
+    return Py_BuildValue("(ONsii)", ret, frame, (const char*)frame_type, gop_idx, gop_pos);
 }
-
 
 static PyObject *
 VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
-    cv::Mat frame_cv;
+    PyArrayObject *frame = NULL;
+    int width = 0;
+    int height = 0;
+    int step = 0;
+    int cn = 0;
+    int gop_idx = -1;
+    int gop_pos = 0;
+
+    char frame_type[2] = "?";
+
+    PyObject *ret = Py_True;
+
+    if (!self->vcap.read(&frame, &step, &width, &height, &cn, frame_type, &gop_idx, &gop_pos)) {
+        width = 0;
+        height = 0;
+        step = 0;
+        cn = 0;
+        frame = (PyArrayObject *)Py_None;
+        ret = Py_False;
+    }
+
+    return Py_BuildValue("(ONsii)", ret, frame, (const char*)frame_type, gop_idx, gop_pos);
+}
+
+static PyObject *
+VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
+{
     uint8_t *frame = NULL;
     int width = 0;
     int height = 0;
     int step = 0;
     int cn = 0;
+    int gop_idx = -1;
+    int gop_pos = 0;
 
-    MVS_DTYPE *motion_vectors = NULL;
+    PyArrayObject *accumulated_mv = NULL;
     MVS_DTYPE num_mvs = 0;
     char frame_type[2] = "?";
 
-    double frame_timestamp = 0;
-
     PyObject *ret = Py_True;
-
-    if (!self->vcap.read(&frame, &step, &width, &height, &cn, frame_type, &motion_vectors, &num_mvs, &frame_timestamp)) {
-        num_mvs = 0;
+    
+    if (!self->vcap.read_accumulate(&frame, &step, &width, &height, &cn, frame_type, &accumulated_mv, &num_mvs, &gop_idx, &gop_pos)) {
         width = 0;
         height = 0;
         step = 0;
         cn = 0;
-        frame_timestamp = 0;
+        accumulated_mv = (PyArrayObject *)Py_None;
         ret = Py_False;
     }
 
-    // copy frame buffer into new cv::Mat
-    cv::Mat(height, width, CV_MAKETYPE(CV_8U, cn), frame, step).copyTo(frame_cv);
+    npy_intp dims[3] = {height, width, cn};
+    PyObject* frame_nd = PyArray_SimpleNewFromData(3, dims, NPY_UINT8, frame);
 
-    // convert frame cv::Mat to numpy.ndarray
-    NDArrayConverter cvt;
-    PyObject* frame_nd = cvt.toNDArray(frame_cv);
-
-    // convert motion vector buffer into numpy array
-    npy_intp dims_mvs[2] = {(npy_intp)num_mvs, 10};
-    PyObject *motion_vectors_nd = PyArray_SimpleNewFromData(2, dims_mvs, MVS_DTYPE_NP, motion_vectors);
-    PyArray_ENABLEFLAGS((PyArrayObject*)motion_vectors_nd, NPY_ARRAY_OWNDATA);
-
-    return Py_BuildValue("(ONNsd)", ret, frame_nd, motion_vectors_nd, (const char*)frame_type, frame_timestamp);
+    return Py_BuildValue("(ONNsii)", ret, frame_nd, accumulated_mv, (const char*)frame_type, gop_idx, gop_pos);
 }
 
 
@@ -146,6 +147,7 @@ static PyMethodDef VideoCap_methods[] = {
     {"read", (PyCFunction) VideoCap_read, METH_NOARGS, "Grab and decode the next frame and motion vectors"},
     {"grab", (PyCFunction) VideoCap_grab, METH_NOARGS, "Grab the next frame and motion vectors from the stream"},
     {"retrieve", (PyCFunction) VideoCap_retrieve, METH_NOARGS, "Decode the grabbed frame and motion vectors"},
+    {"read_accumulate", (PyCFunction) VideoCap_read_accumulate, METH_NOARGS, "Decode the grabbed frame and accumulate the motion vectors"},
     {"release", (PyCFunction) VideoCap_release, METH_NOARGS, "Release the video device and free ressources"},
     {NULL}  /* Sentinel */
 };

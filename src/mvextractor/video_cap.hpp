@@ -14,10 +14,13 @@ extern "C" {
 
 #include "time_cvt.hpp"
 
+#define PY_ARRAY_UNIQUE_SYMBOL accumulator_ARRAY_API
+#include <numpy/arrayobject.h>
 
 // for changing the dtype of motion vector
 #define MVS_DTYPE int32_t
 #define MVS_DTYPE_NP NPY_INT32
+#define MV_ELEMS 7
 
 // whether or not to print some debug info
 //#define DEBUG
@@ -67,8 +70,15 @@ private:
     Image_FFMPEG picture;
     struct SwsContext *img_convert_ctx;
     int64_t frame_number;
-    double frame_timestamp;
     bool is_rtsp;
+    PyArrayObject *running_mv_sum;
+    int *prev_locations;
+    int *curr_locations;
+    int gop_idx;
+    int gop_pos;
+    char frame_type;
+    int mv_res_reduction;
+    int iframe_res_reduction;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif
@@ -84,6 +94,7 @@ private:
     */
     bool check_format_rtsp(const char *format_names);
 
+    void reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int w, int h);
 
 public:
 
@@ -106,7 +117,7 @@ public:
     * @retval true if video file or url could be opened sucessfully, false
     *     otherwise.
     */
-    bool open(const char *url);
+    bool open(const char *url, char frame_type, int iframe_res_reduction, int mv_res_reduction);
 
     /** Reads the next video frame and motion vectors from the stream
     *
@@ -169,28 +180,19 @@ public:
     * @param num_mvs The number of motion vectors corresponding to the rows of
     *    the motion vector array.
     *
-    * @param frame_timestamp UTC wall time of each frame in the format of a UNIX
-    *    timestamp. In case, input is a video file, the timestamp is derived
-    *    from the system time. If the input is an RTSP stream the timestamp
-    *    marks the time the frame was sent out by the sender (e.g. IP camera).
-    *    Thus, the timestamp represents the wall time at which the frame was
-    *    taken rather then the time at which the frame was received. This allows
-    *    e.g. for accurate synchronization of multiple RTSP streams. In order
-    *    for this to work, the RTSP sender needs to generate RTCP sender
-    *    reports which contain a mapping from wall time to stream time. Not all
-    *    RTSP senders will send sender reports as it is not part of the
-    *    standard. If IP cameras are used which implement the ONVIF standard,
-    *    sender reports are always sent and thus timestamps can always be
-    *    computed.
-    *
     * @retval true if the grabbed video frame and motion vectors could be
     *    decoded and returned successfully, false otherwise.
     */
-    bool retrieve(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp);
-
+    bool retrieve(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
+    
     /** Convenience wrapper which combines a call of `grab` and `retrieve`.
     *
     *   The parameters and return value correspond to the `retrieve` method.
     */
-    bool read(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, MVS_DTYPE **motion_vectors, MVS_DTYPE *num_mvs, double *frame_timestamp);
+    bool read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
+
+    // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
+    bool accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
+
+    bool read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
 };
