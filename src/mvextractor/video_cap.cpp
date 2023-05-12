@@ -445,9 +445,9 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
                                 this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
                                 
                                 // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
-                                // #pragma omp atomic update
+                                #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
-                                // #pragma omp atomic update
+                                #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
                             }
                         }
