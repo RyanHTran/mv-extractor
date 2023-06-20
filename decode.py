@@ -19,7 +19,7 @@ if __name__ == "__main__":
     cap = VideoCap()
 
     # open the video file
-    ret = cap.open(args.video_url, 'A', 1, 8)
+    ret = cap.open(args.video_url, 'A', -1, -1, 8)
 
     if not ret:
         raise RuntimeError(f"Could not open {args.video_url}")
@@ -36,6 +36,7 @@ if __name__ == "__main__":
             print("Frame: ", step, end=" ")
 
         # read next video frame and corresponding motion vectors
+        # ret, frame, frame_type, gop_idx, gop_pos = cap.read()
         ret, frame, motion_vectors, frame_type, gop_idx, gop_pos = cap.read_accumulate()
 
         # if there is an error reading the frame
