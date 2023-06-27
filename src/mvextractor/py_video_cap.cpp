@@ -131,7 +131,7 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     npy_intp dims[3] = {height, width, cn};
     PyObject* frame_nd = PyArray_SimpleNewFromData(3, dims, NPY_UINT8, frame);
 
-    return Py_BuildValue("(ONNsii)", ret, frame_nd, accumulated_mv, (const char*)frame_type, gop_idx, gop_pos);
+    return Py_BuildValue("(ONOsii)", ret, frame_nd, accumulated_mv, (const char*)frame_type, gop_idx, gop_pos);
 }
 
 

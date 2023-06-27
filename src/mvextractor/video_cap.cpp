@@ -317,8 +317,6 @@ bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *heigh
     *cn = this->picture.cn;
 
     npy_intp dims[3] = {*height, *width, *cn};
-    // PyArrayObject* frame_nd = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->picture.data);
-    // *frame = (PyArrayObject *)PyArray_NewCopy(frame_nd, NPY_CORDER);
     *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->picture.data);
 
     *gop_idx = this->gop_idx;
@@ -469,7 +467,6 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
     
     // Set return value to running_mv_sum
     *accumulated_mv = this->running_mv_sum;
-    Py_INCREF(*accumulated_mv);
 
     *gop_idx = this->gop_idx;
     *gop_pos = this->gop_pos;
