@@ -66,7 +66,8 @@ private:
     int video_stream_idx;
     AVPacket packet;
     AVFrame *frame;
-    AVFrame rgb_frame;
+    AVFrame **out_frames;
+    AVFrame rgb_frame; // TODO
     Image_FFMPEG picture;
     struct SwsContext *img_convert_ctx;
     int64_t frame_number;
@@ -96,29 +97,6 @@ private:
     bool check_format_rtsp(const char *format_names);
 
     void reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int w, int h);
-
-public:
-
-    /** Constructor */
-    VideoCap();
-
-    /** Destroy the VideoCap object and free all ressources */
-    void release(void);
-
-    /** Open a video file or RTSP url
-    *
-    * The stream must be H264 encoded. Otherwise, undefined behaviour is
-    * likely.
-    *
-    * @param url Relative or fully specified file path or an RTSP url specifying
-    *     the location of the video stream. Example "vid.flv" for a video
-    *     file located in the same directory as the source files. Or
-    *     "rtsp://xxx.xxx.xxx.xxx:554" for an IP camera streaming via RTSP.
-    *
-    * @retval true if video file or url could be opened sucessfully, false
-    *     otherwise.
-    */
-    bool open(const char *url, char frame_type, int iframe_width, int iframe_height, int mv_res_reduction);
 
     /** Reads the next video frame and motion vectors from the stream
     *
@@ -184,7 +162,30 @@ public:
     * @retval true if the grabbed video frame and motion vectors could be
     *    decoded and returned successfully, false otherwise.
     */
-    bool retrieve(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
+    bool retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
+
+public:
+
+    /** Constructor */
+    VideoCap();
+
+    /** Destroy the VideoCap object and free all ressources */
+    void release(void);
+
+    /** Open a video file or RTSP url
+    *
+    * The stream must be H264 encoded. Otherwise, undefined behaviour is
+    * likely.
+    *
+    * @param url Relative or fully specified file path or an RTSP url specifying
+    *     the location of the video stream. Example "vid.flv" for a video
+    *     file located in the same directory as the source files. Or
+    *     "rtsp://xxx.xxx.xxx.xxx:554" for an IP camera streaming via RTSP.
+    *
+    * @retval true if video file or url could be opened sucessfully, false
+    *     otherwise.
+    */
+    bool open(const char *url, char frame_type, int iframe_width, int iframe_height, int mv_res_reduction);
     
     /** Convenience wrapper which combines a call of `grab` and `retrieve`.
     *

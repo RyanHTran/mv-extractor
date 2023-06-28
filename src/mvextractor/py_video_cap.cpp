@@ -8,7 +8,6 @@
 typedef struct {
     PyObject_HEAD
     VideoCap vcap;
-    //NDArrayConverter mat_to_ndarray_cvt;
 } VideoCapObject;
 
 
@@ -36,43 +35,6 @@ VideoCap_open(VideoCapObject *self, PyObject *args)
         Py_RETURN_FALSE;
 
     Py_RETURN_TRUE;
-}
-
-static PyObject *
-VideoCap_grab(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
-{
-    if (!self->vcap.grab())
-        Py_RETURN_FALSE;
-
-    Py_RETURN_TRUE;
-}
-
-
-static PyObject *
-VideoCap_retrieve(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
-{
-    PyArrayObject *frame = NULL;
-    int width = 0;
-    int height = 0;
-    int step = 0;
-    int cn = 0;
-    int gop_idx = -1;
-    int gop_pos = 0;
-
-    char frame_type[2] = "?";
-
-    PyObject *ret = Py_True;
-
-    if (!self->vcap.retrieve(&frame, &step, &width, &height, &cn, frame_type, &gop_idx, &gop_pos)) {
-        width = 0;
-        height = 0;
-        step = 0;
-        cn = 0;
-        frame = (PyArrayObject *)Py_None;
-        ret = Py_False;
-    }
-
-    return Py_BuildValue("(ONsii)", ret, frame, (const char*)frame_type, gop_idx, gop_pos);
 }
 
 static PyObject *
@@ -146,8 +108,6 @@ VideoCap_release(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 static PyMethodDef VideoCap_methods[] = {
     {"open", (PyCFunction) VideoCap_open, METH_VARARGS, "Open a video file or device with given filename/url"},
     {"read", (PyCFunction) VideoCap_read, METH_NOARGS, "Grab and decode the next frame and motion vectors"},
-    {"grab", (PyCFunction) VideoCap_grab, METH_NOARGS, "Grab the next frame and motion vectors from the stream"},
-    {"retrieve", (PyCFunction) VideoCap_retrieve, METH_NOARGS, "Decode the grabbed frame and motion vectors"},
     {"read_accumulate", (PyCFunction) VideoCap_read_accumulate, METH_NOARGS, "Decode the grabbed frame and accumulate the motion vectors"},
     {"release", (PyCFunction) VideoCap_release, METH_NOARGS, "Release the video device and free ressources"},
     {NULL}  /* Sentinel */

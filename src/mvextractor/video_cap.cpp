@@ -11,6 +11,7 @@ VideoCap::VideoCap() {
     this->video_stream = NULL;
     this->video_stream_idx = -1;
     this->frame = NULL;
+    this->out_frames = NULL;
     this->img_convert_ctx = NULL;
     this->frame_number = 0;
     this->is_rtsp = false;
@@ -24,7 +25,6 @@ VideoCap::VideoCap() {
     this->iframe_width = -1;
     this->iframe_height = -1;
 
-    memset(&(this->rgb_frame), 0, sizeof(this->rgb_frame));
     memset(&(this->picture), 0, sizeof(this->picture));
     memset(&(this->packet), 0, sizeof(this->packet));
     av_init_packet(&(this->packet));
@@ -42,8 +42,16 @@ void VideoCap::release(void) {
         this->frame = NULL;
     }
 
-    av_frame_unref(&(this->rgb_frame));
-    memset(&(this->rgb_frame), 0, sizeof(this->rgb_frame));
+    if (this->out_frames != NULL) {
+        for (int i = 0; i < 7; i++) {
+            if (this->out_frames[i] != NULL) {
+                av_frame_free(&(this->out_frames[i]));
+                this->out_frames[i] = NULL;
+            }
+        }
+        this->out_frames = NULL;
+    }
+    
     memset(&(this->picture), 0, sizeof(this->picture));
 
     if (this->video_dec_ctx != NULL) {
@@ -181,6 +189,15 @@ bool VideoCap::open(const char *url, char frame_type, int iframe_width, int ifra
     if (!this->frame)
         goto error;
 
+    this->out_frames = (AVFrame**) malloc(7 * sizeof(AVFrame*));
+    if (!this->out_frames)
+        goto error;
+    for (int i = 0; i < 7; i++) {
+        this->out_frames[i] = av_frame_alloc();
+        if (!this->out_frames[i])
+            goto error;
+    }
+
     if (this->video_stream_idx >= 0)
         valid = true;
 
@@ -247,7 +264,7 @@ bool VideoCap::grab(void) {
     return valid;
 }
 
-bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos) {
+bool VideoCap::retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos) {
     if (!this->video_stream || !(this->frame->data[0]))
         return false;
 
@@ -287,17 +304,17 @@ bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *heigh
         if (this->img_convert_ctx == NULL)
             return false;
 
-        av_frame_unref(&(this->rgb_frame));
-        this->rgb_frame.format = AV_PIX_FMT_BGR24;
-        this->rgb_frame.width = new_width;
-        this->rgb_frame.height = new_height;
-        if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
+        av_frame_unref(out_frame);
+        out_frame->format = AV_PIX_FMT_BGR24;
+        out_frame->width = new_width;
+        out_frame->height = new_height;
+        if (0 != av_frame_get_buffer(out_frame, 0))
             return false;
 
-        this->picture.width = this->rgb_frame.width;
-        this->picture.height = this->rgb_frame.height;
-        this->picture.data = this->rgb_frame.data[0];
-        this->picture.step = this->rgb_frame.linesize[0];
+        this->picture.width = out_frame->width;
+        this->picture.height = out_frame->height;
+        this->picture.data = out_frame->data[0];
+        this->picture.step = out_frame->linesize[0];
         this->picture.cn = 3;
     }
 
@@ -307,8 +324,8 @@ bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *heigh
         this->frame->data,
         this->frame->linesize,
         0, this->video_dec_ctx->height,
-        this->rgb_frame.data,
-        this->rgb_frame.linesize
+        out_frame->data,
+        out_frame->linesize
         );
 
     *width = this->picture.width;
@@ -328,7 +345,7 @@ bool VideoCap::retrieve(PyArrayObject **frame, int *step, int *width, int *heigh
 bool VideoCap::read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos) {
     bool ret = this->grab();
     if (ret)
-        ret = this->retrieve(frame, step, width, height, cn, frame_type, gop_idx, gop_pos);
+        ret = this->retrieve(this->out_frames[0], frame, step, width, height, cn, frame_type, gop_idx, gop_pos);
     return ret;
 }
 
@@ -422,8 +439,8 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
             int mv_width = this->video_dec_ctx->width / this->mv_res_reduction;
             int mv_height = this->video_dec_ctx->height / this->mv_res_reduction;
 
-            #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
-            private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
+            // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
+            // private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
             for (int i = 0; i < sd->size / sizeof(*mvs); i++) {
                 const AVMotionVector *mv = &mvs[i];
                 val_x = mv->dst_x - mv->src_x;
@@ -452,9 +469,9 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
                                 this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
                                 
                                 // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
-                                #pragma omp atomic update
+                                // #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
-                                #pragma omp atomic update
+                                // #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
                             }
                         }
@@ -516,7 +533,7 @@ void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, PyAr
         *curr_locations = (int*) malloc(w * h * 2 * sizeof(int));
     }
 
-    #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
+    // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
     for (int x = 0; x < w; ++x) {
         for (int y = 0; y < h; ++y) {
             (*prev_locations)[x * h * 2 + y * 2    ]  = x;

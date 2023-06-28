@@ -20,7 +20,6 @@ if __name__ == "__main__":
     num_frames = int(cv2.VideoCapture(args.video_url).get(cv2.CAP_PROP_FRAME_COUNT))
 
     cap = VideoCap()
-
     # open the video file
     ret = cap.open(args.video_url, 'A', -1, -1, 8)
 
@@ -40,8 +39,8 @@ if __name__ == "__main__":
                 print("Frame: ", step, end=" ")
 
             # read next video frame and corresponding motion vectors
-            # ret, frame, frame_type, gop_idx, gop_pos = cap.read()
-            ret, frame, motion_vectors, frame_type, gop_idx, gop_pos = cap.read_accumulate()
+            ret, frame, frame_type, gop_idx, gop_pos = cap.read()
+            # ret, frame, motion_vectors, frame_type, gop_idx, gop_pos = cap.read_accumulate()
 
             # if there is an error reading the frame
             if not ret:
@@ -52,14 +51,14 @@ if __name__ == "__main__":
             frame_height, frame_width = frame.shape[0], frame.shape[1]
 
             if args.verify:
-                # Check motion vectors
-                load_path = os.path.join('reference', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
-                reference_mv = np.load(load_path)['arr_0']
-                if not (motion_vectors == reference_mv).all():
-                    print('Decoded motion vectors do not match expected output at frame {}: {}_{}.npz'.format(step, gop_idx, gop_pos))
-                    print('Expected: {}'.format(reference_mv[motion_vectors != reference_mv]))
-                    print('Got: {}'.format(motion_vectors[motion_vectors != reference_mv]))
-                    break
+                # # Check motion vectors
+                # load_path = os.path.join('reference', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
+                # reference_mv = np.load(load_path)['arr_0']
+                # if not (motion_vectors == reference_mv).all():
+                #     print('Decoded motion vectors do not match expected output at frame {}: {}_{}.npz'.format(step, gop_idx, gop_pos))
+                #     print('Expected: {}'.format(reference_mv[motion_vectors != reference_mv]))
+                #     print('Got: {}'.format(motion_vectors[motion_vectors != reference_mv]))
+                #     break
                 # Check frames
                 load_path = os.path.join('reference', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos))
                 reference_bgr = cv2.imread(load_path)
