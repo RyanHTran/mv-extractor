@@ -24,8 +24,8 @@ VideoCap::VideoCap() {
     this->mv_res_reduction = 8;
     this->iframe_width = -1;
     this->iframe_height = -1;
+    this->gop_size = -1;
 
-    memset(&(this->picture), 0, sizeof(this->picture));
     memset(&(this->packet), 0, sizeof(this->packet));
     av_init_packet(&(this->packet));
 }
@@ -39,21 +39,17 @@ void VideoCap::release(void) {
 
     if (this->frame != NULL) {
         av_frame_free(&(this->frame));
-        this->frame = NULL;
     }
 
     if (this->out_frames != NULL) {
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < this->gop_size; i++) {
             if (this->out_frames[i] != NULL) {
                 av_frame_free(&(this->out_frames[i]));
-                this->out_frames[i] = NULL;
             }
         }
         this->out_frames = NULL;
     }
     
-    memset(&(this->picture), 0, sizeof(this->picture));
-
     if (this->video_dec_ctx != NULL) {
         avcodec_free_context(&(this->video_dec_ctx));
         this->video_dec_ctx = NULL;
@@ -97,10 +93,11 @@ void VideoCap::release(void) {
     this->mv_res_reduction = 8;
     this->iframe_width = -1;
     this->iframe_height = -1;
+    this->gop_size = -1;
 }
 
 
-bool VideoCap::open(const char *url, char frame_type, int iframe_width, int iframe_height, int mv_res_reduction) {
+bool VideoCap::open(const char *url, char frame_type, int iframe_width, int iframe_height, int mv_res_reduction, int gop_size) {
 
     bool valid = false;
     AVStream *st = NULL;
@@ -166,10 +163,6 @@ bool VideoCap::open(const char *url, char frame_type, int iframe_width, int ifra
         this->video_dec_ctx->width = enc_width;
     if (enc_height && (this->video_dec_ctx->height != enc_height))
         this->video_dec_ctx->height = enc_height;
-
-    this->picture.width = this->video_dec_ctx->width;
-    this->picture.height = this->video_dec_ctx->height;
-    this->picture.data = NULL;
     
     this->frame_type = frame_type;
     if (frame_type == 'I'){
@@ -179,6 +172,7 @@ bool VideoCap::open(const char *url, char frame_type, int iframe_width, int ifra
     this->iframe_width = iframe_width;
     this->iframe_height = iframe_height;
     this->mv_res_reduction = mv_res_reduction;
+    this->gop_size = std::max(this->gop_size, 1);
     
     // print info (duration, bitrate, streams, container, programs, metadata, side data, codec, time base)
 #ifdef DEBUG
@@ -189,10 +183,10 @@ bool VideoCap::open(const char *url, char frame_type, int iframe_width, int ifra
     if (!this->frame)
         goto error;
 
-    this->out_frames = (AVFrame**) malloc(7 * sizeof(AVFrame*));
+    this->out_frames = (AVFrame**) malloc(this->gop_size * sizeof(AVFrame*));
     if (!this->out_frames)
         goto error;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < this->gop_size; i++) {
         this->out_frames[i] = av_frame_alloc();
         if (!this->out_frames[i])
             goto error;
@@ -287,9 +281,9 @@ bool VideoCap::retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, in
     int new_height = (this->iframe_height > 0) ? this->iframe_height : this->video_dec_ctx->height;
 
     if (this->img_convert_ctx == NULL ||
-        this->picture.width != new_width ||
-        this->picture.height != new_height ||
-        this->picture.data == NULL) {
+        out_frame->width != new_width ||
+        out_frame->height != new_height ||
+        out_frame->data == NULL) {
 
         this->img_convert_ctx = sws_getCachedContext(
                 this->img_convert_ctx,
@@ -310,12 +304,6 @@ bool VideoCap::retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, in
         out_frame->height = new_height;
         if (0 != av_frame_get_buffer(out_frame, 0))
             return false;
-
-        this->picture.width = out_frame->width;
-        this->picture.height = out_frame->height;
-        this->picture.data = out_frame->data[0];
-        this->picture.step = out_frame->linesize[0];
-        this->picture.cn = 3;
     }
 
     // change color space of frame
@@ -328,16 +316,30 @@ bool VideoCap::retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, in
         out_frame->linesize
         );
 
-    *width = this->picture.width;
-    *height = this->picture.height;
-    *step = this->picture.step;
-    *cn = this->picture.cn;
+    *width = out_frame->width;
+    *height = out_frame->height;
+    *step = out_frame->linesize[0];
+    *cn = 3;
 
     npy_intp dims[3] = {*height, *width, *cn};
-    *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->picture.data);
+    *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, out_frame->data[0]);
 
     *gop_idx = this->gop_idx;
     *gop_pos = this->gop_pos;
+
+    // Copy motion vectors into out_frame
+    AVFrameSideData *sd = av_frame_get_side_data(this->frame, AV_FRAME_DATA_MOTION_VECTORS);
+    if (sd) {
+        if (av_frame_get_side_data(out_frame, AV_FRAME_DATA_MOTION_VECTORS)) {
+            av_frame_remove_side_data(out_frame, AV_FRAME_DATA_MOTION_VECTORS);
+        }
+            
+        // AVFrameSideData *out_sd = av_frame_new_side_data(out_frame, AV_FRAME_DATA_MOTION_VECTORS, sd->size);
+        // memcpy(out_sd, sd, sd->size);
+
+        if (!av_frame_new_side_data_from_buf(out_frame, AV_FRAME_DATA_MOTION_VECTORS, av_buffer_ref(sd->buf)))
+            return false;
+    }
 
     return true;
 }
@@ -354,145 +356,141 @@ bool VideoCap::accumulate(uint8_t **frame, int *step, int *width, int *height, i
         return false;
 
     // get frame type (I, P, B, etc.) and create a null terminated c-string
-    frame_type[0] = av_get_picture_type_char(this->frame->pict_type);
-    frame_type[1] = '\0';
+    // frame_type[0] = av_get_picture_type_char(this->frame->pict_type);
+    // frame_type[1] = '\0';
 
-    if (frame_type[0] == 'I' || this->prev_locations == NULL || this->curr_locations == NULL || this->running_mv_sum == NULL) {
-        this->reset_accumulate(&(this->prev_locations), &(this->curr_locations), &(this->running_mv_sum), this->video_dec_ctx->width, this->video_dec_ctx->height);
-    }
+    // if (frame_type[0] == 'I' || this->prev_locations == NULL || this->curr_locations == NULL || this->running_mv_sum == NULL) {
+    //     this->reset_accumulate(&(this->prev_locations), &(this->curr_locations), &(this->running_mv_sum), this->video_dec_ctx->width, this->video_dec_ctx->height);
+    // }
 
-    if (frame_type[0] == 'I'){
-        this->gop_idx += 1;
-        this->gop_pos = 0;
-    } else {
-        this->gop_pos += 1;
-    }
+    // if (frame_type[0] == 'I'){
+    //     this->gop_idx += 1;
+    //     this->gop_pos = 0;
+    // } else {
+    //     this->gop_pos += 1;
+    // }
 
-    if (this->frame_type == 'P' && frame_type[0] != 'P'){
-        return this->read_accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs, gop_idx, gop_pos);
-    }
+    // if (this->frame_type == 'P' && frame_type[0] != 'P'){
+    //     return this->read_accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs, gop_idx, gop_pos);
+    // }
 
-    int new_width = (this->iframe_width > 0) ? this->iframe_width : this->video_dec_ctx->width;
-    int new_height = (this->iframe_height > 0) ? this->iframe_height : this->video_dec_ctx->height;
+    // int new_width = (this->iframe_width > 0) ? this->iframe_width : this->video_dec_ctx->width;
+    // int new_height = (this->iframe_height > 0) ? this->iframe_height : this->video_dec_ctx->height;
 
-    if (this->img_convert_ctx == NULL ||
-        this->picture.width != new_width ||
-        this->picture.height != new_height ||
-        this->picture.data == NULL) {
+    // if (this->img_convert_ctx == NULL ||
+    //     out_frame->width != new_width ||
+    //     out_frame->height != new_height ||
+    //     out_frame->data == NULL) {
 
-        this->img_convert_ctx = sws_getCachedContext(
-                this->img_convert_ctx,
-                this->video_dec_ctx->width, this->video_dec_ctx->height,
-                this->video_dec_ctx->pix_fmt,
-                new_width, new_height,
-                AV_PIX_FMT_BGR24,
-                SWS_BICUBIC,
-                NULL, NULL, NULL
-                );
+    //     this->img_convert_ctx = sws_getCachedContext(
+    //             this->img_convert_ctx,
+    //             this->video_dec_ctx->width, this->video_dec_ctx->height,
+    //             this->video_dec_ctx->pix_fmt,
+    //             new_width, new_height,
+    //             AV_PIX_FMT_BGR24,
+    //             SWS_BICUBIC,
+    //             NULL, NULL, NULL
+    //             );
 
-        if (this->img_convert_ctx == NULL)
-            return false;
+    //     if (this->img_convert_ctx == NULL)
+    //         return false;
 
-        av_frame_unref(&(this->rgb_frame));
-        this->rgb_frame.format = AV_PIX_FMT_BGR24;
-        this->rgb_frame.width = new_width;
-        this->rgb_frame.height = new_height;
-        if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
-            return false;
+    //     av_frame_unref(&(this->rgb_frame));
+    //     this->rgb_frame.format = AV_PIX_FMT_BGR24;
+    //     this->rgb_frame.width = new_width;
+    //     this->rgb_frame.height = new_height;
+    //     if (0 != av_frame_get_buffer(&(this->rgb_frame), 0))
+    //         return false;
+    // }
 
-        this->picture.width = this->rgb_frame.width;
-        this->picture.height = this->rgb_frame.height;
-        this->picture.data = this->rgb_frame.data[0];
-        this->picture.step = this->rgb_frame.linesize[0];
-        this->picture.cn = 3;
-    }
+    // // change color space of frame
+    // sws_scale(
+    //     this->img_convert_ctx,
+    //     this->frame->data,
+    //     this->frame->linesize,
+    //     0, this->video_dec_ctx->height,
+    //     this->rgb_frame.data,
+    //     this->rgb_frame.linesize
+    //     );
 
-    // change color space of frame
-    sws_scale(
-        this->img_convert_ctx,
-        this->frame->data,
-        this->frame->linesize,
-        0, this->video_dec_ctx->height,
-        this->rgb_frame.data,
-        this->rgb_frame.linesize
-        );
+    // *frame = out_frame->data[0];
+    // *width = out_frame->width;
+    // *height = out_frame->height;
+    // *step = out_frame->linesize[0];
+    // *cn = 3;
 
-    *frame = this->picture.data;
-    *width = this->picture.width;
-    *height = this->picture.height;
-    *step = this->picture.step;
-    *cn = this->picture.cn;
+    // // get motion vectors
+    // AVFrameSideData *sd = av_frame_get_side_data(this->frame, AV_FRAME_DATA_MOTION_VECTORS);
+    // if (sd) {
+    //     AVMotionVector *mvs = (AVMotionVector *)sd->data;
 
-    // get motion vectors
-    AVFrameSideData *sd = av_frame_get_side_data(this->frame, AV_FRAME_DATA_MOTION_VECTORS);
-    if (sd) {
-        AVMotionVector *mvs = (AVMotionVector *)sd->data;
+    //     *num_mvs = sd->size / sizeof(*mvs);
 
-        *num_mvs = sd->size / sizeof(*mvs);
+    //     if (*num_mvs > 0) {
+    //         int p_dst_x, p_dst_y, p_src_x, p_src_y;
+    //         int val_x, val_y;
+    //         int original_x, original_y;
+    //         const AVMotionVector *mvs = (const AVMotionVector *)sd->data;
 
-        if (*num_mvs > 0) {
-            int p_dst_x, p_dst_y, p_src_x, p_src_y;
-            int val_x, val_y;
-            int original_x, original_y;
-            const AVMotionVector *mvs = (const AVMotionVector *)sd->data;
+    //         int mv_width = this->video_dec_ctx->width / this->mv_res_reduction;
+    //         int mv_height = this->video_dec_ctx->height / this->mv_res_reduction;
 
-            int mv_width = this->video_dec_ctx->width / this->mv_res_reduction;
-            int mv_height = this->video_dec_ctx->height / this->mv_res_reduction;
+    //         // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
+    //         // private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
+    //         for (int i = 0; i < sd->size / sizeof(*mvs); i++) {
+    //             const AVMotionVector *mv = &mvs[i];
+    //             val_x = mv->dst_x - mv->src_x;
+    //             val_y = mv->dst_y - mv->src_y;
+    //             // assert(mv->source == -1);
 
-            // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
-            // private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
-            for (int i = 0; i < sd->size / sizeof(*mvs); i++) {
-                const AVMotionVector *mv = &mvs[i];
-                val_x = mv->dst_x - mv->src_x;
-                val_y = mv->dst_y - mv->src_y;
-                // assert(mv->source == -1);
+    //             if (val_x != 0 || val_y != 0) {
+    //                 for (int x_start = 0; x_start < mv->w / this->mv_res_reduction; ++x_start) {
+    //                     for (int y_start = 0; y_start < mv->h / this->mv_res_reduction; ++y_start) {
+    //                         p_dst_x = mv->dst_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
+    //                         p_dst_y = mv->dst_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
 
-                if (val_x != 0 || val_y != 0) {
-                    for (int x_start = 0; x_start < mv->w / this->mv_res_reduction; ++x_start) {
-                        for (int y_start = 0; y_start < mv->h / this->mv_res_reduction; ++y_start) {
-                            p_dst_x = mv->dst_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
-                            p_dst_y = mv->dst_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
+    //                         p_src_x = mv->src_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
+    //                         p_src_y = mv->src_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
 
-                            p_src_x = mv->src_x / this->mv_res_reduction + x_start - mv->w / (2 * this->mv_res_reduction);
-                            p_src_y = mv->src_y / this->mv_res_reduction + y_start - mv->h / (2 * this->mv_res_reduction);
-
-                            if (p_dst_y >= 0 && p_dst_y < mv_height && 
-                                p_dst_x >= 0 && p_dst_x < mv_width &&
-                                p_src_y >= 0 && p_src_y < mv_height && 
-                                p_src_x >= 0 && p_src_x < mv_width) {
+    //                         if (p_dst_y >= 0 && p_dst_y < mv_height && 
+    //                             p_dst_x >= 0 && p_dst_x < mv_width &&
+    //                             p_src_y >= 0 && p_src_y < mv_height && 
+    //                             p_src_x >= 0 && p_src_x < mv_width) {
                                 
-                                // Shift macroblock in curr_locations
-                                original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
-                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
+    //                             // Shift macroblock in curr_locations
+    //                             original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
+    //                             this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
                                 
-                                original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
-                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
+    //                             original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
+    //                             this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
                                 
-                                // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
-                                // #pragma omp atomic update
-                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
-                                // #pragma omp atomic update
-                                *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
-                            }
-                        }
-                    }
-                }
-            }
-            memcpy(this->prev_locations, this->curr_locations, mv_width * mv_height * 2 * sizeof(int));
-        }
-    }
+    //                             // Accumulate into running_mv_sum the motion vector for the pixels in this macroblock
+    //                             // #pragma omp atomic update
+    //                             *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 0)) += val_x;
+    //                             // #pragma omp atomic update
+    //                             *((npy_int16*)PyArray_GETPTR3(this->running_mv_sum, original_y, original_x, 1)) += val_y;
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         memcpy(this->prev_locations, this->curr_locations, mv_width * mv_height * 2 * sizeof(int));
+    //     }
+    // }
     
-    // Set return value to running_mv_sum
-    *accumulated_mv = this->running_mv_sum;
+    // // Set return value to running_mv_sum
+    // *accumulated_mv = this->running_mv_sum;
 
-    *gop_idx = this->gop_idx;
-    *gop_pos = this->gop_pos;
+    // *gop_idx = this->gop_idx;
+    // *gop_pos = this->gop_pos;
 
     return true;
 }
 
 bool VideoCap::read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos) {
     bool ret = this->grab();
+    // if (ret)
+    //     ret = this->retrieve(this->out_frames[0], frame, step, width, height, cn, frame_type, gop_idx, gop_pos);
     if (ret)
         ret = this->accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs, gop_idx, gop_pos);
     return ret;

@@ -27,11 +27,12 @@ VideoCap_open(VideoCapObject *self, PyObject *args)
     int iframe_width;
     int iframe_height;
     int mv_res_reduction;
+    int gop_size;
 
-    if (!PyArg_ParseTuple(args, "sCiii", &url, &frame_type, &iframe_width, &iframe_height, &mv_res_reduction))
+    if (!PyArg_ParseTuple(args, "sCiiii", &url, &frame_type, &iframe_width, &iframe_height, &mv_res_reduction, &gop_size))
         Py_RETURN_FALSE;
 
-    if (!self->vcap.open(url, (char)frame_type,  iframe_width, iframe_height, mv_res_reduction))
+    if (!self->vcap.open(url, (char)frame_type,  iframe_width, iframe_height, mv_res_reduction, gop_size))
         Py_RETURN_FALSE;
 
     Py_RETURN_TRUE;

@@ -21,7 +21,8 @@ if __name__ == "__main__":
 
     cap = VideoCap()
     # open the video file
-    ret = cap.open(args.video_url, 'A', -1, -1, 8)
+    # ret = cap.open(args.video_url, 'A', -1, -1, 8)
+    ret = cap.open(args.video_url, 'A', -1, -1, 8, 15)
 
     if not ret:
         raise RuntimeError(f"Could not open {args.video_url}")
@@ -78,8 +79,8 @@ if __name__ == "__main__":
                 print("({}, {})".format(gop_idx, gop_pos), step, end=" ")
                 print("frame type: {} | ".format(frame_type), end=" ")
 
-                print("frame size: {} | ".format(np.shape(frame)), end=" ")
-                print("motion vectors: {}".format(np.shape(motion_vectors)))
+                # print("frame size: {} | ".format(np.shape(frame)), end=" ")
+                # print("motion vectors: {}".format(np.shape(motion_vectors)))
 
             # cv2.imwrite(os.path.join('reference', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos)), frame)
 

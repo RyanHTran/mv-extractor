@@ -68,7 +68,6 @@ private:
     AVFrame *frame;
     AVFrame **out_frames;
     AVFrame rgb_frame; // TODO
-    Image_FFMPEG picture;
     struct SwsContext *img_convert_ctx;
     int64_t frame_number;
     bool is_rtsp;
@@ -81,6 +80,7 @@ private:
     int mv_res_reduction;
     int iframe_width;
     int iframe_height;
+    int gop_size;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif
@@ -185,7 +185,7 @@ public:
     * @retval true if video file or url could be opened sucessfully, false
     *     otherwise.
     */
-    bool open(const char *url, char frame_type, int iframe_width, int iframe_height, int mv_res_reduction);
+    bool open(const char *url, char frame_type, int iframe_width, int iframe_height, int mv_res_reduction, int gop_size);
     
     /** Convenience wrapper which combines a call of `grab` and `retrieve`.
     *
