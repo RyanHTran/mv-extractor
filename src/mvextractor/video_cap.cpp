@@ -354,26 +354,37 @@ bool VideoCap::read(PyArrayObject **frame, int *step, int *width, int *height, i
     return ret;
 }
 
-bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs) {
+// bool VideoCap::read_gop(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx) {
+//     bool ret = this->grab(frame_type);
+
+//     if (this->frame_type == 'P' && frame_type[0] != 'P'){
+//         return this->read(frame, step, width, height, cn, frame_type, gop_idx, gop_pos);
+//     }
+
+//     if (ret)
+//         ret = this->retrieve(this->out_frames[0], frame, step, width, height, cn, gop_idx, gop_pos);
+//     return ret;
+// }
+
+bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject **accumulated_mv) {
     // get motion vectors
     AVFrameSideData *sd = av_frame_get_side_data(out_frame, AV_FRAME_DATA_MOTION_VECTORS);
     if (sd) {
         AVMotionVector *mvs = (AVMotionVector *)sd->data;
 
-        *num_mvs = sd->size / sizeof(*mvs);
+        int num_mvs = sd->size / sizeof(*mvs);
 
-        if (*num_mvs > 0) {
+        if (num_mvs > 0) {
             int p_dst_x, p_dst_y, p_src_x, p_src_y;
             int val_x, val_y;
             int original_x, original_y;
-            const AVMotionVector *mvs = (const AVMotionVector *)sd->data;
 
             int mv_width = this->video_dec_ctx->width / this->mv_res_reduction;
             int mv_height = this->video_dec_ctx->height / this->mv_res_reduction;
 
             // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
             // private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
-            for (int i = 0; i < sd->size / sizeof(*mvs); i++) {
+            for (int i = 0; i < num_mvs; i++) {
                 const AVMotionVector *mv = &mvs[i];
                 val_x = mv->dst_x - mv->src_x;
                 val_y = mv->dst_y - mv->src_y;
@@ -420,17 +431,17 @@ bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject **accumulated_mv, MV
     return true;
 }
 
-bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos) {
+bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, int *gop_idx, int *gop_pos) {
     bool ret = this->grab(frame_type);
 
     if (this->frame_type == 'P' && frame_type[0] != 'P'){
-        return this->read_accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, num_mvs, gop_idx, gop_pos);
+        return this->read_accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, gop_idx, gop_pos);
     }
 
     if (ret)
         ret = this->retrieve(this->out_frames[0], frame, step, width, height, cn, gop_idx, gop_pos);
     if (ret)
-        ret = this->accumulate(this->out_frames[0], accumulated_mv, num_mvs);
+        ret = this->accumulate(this->out_frames[0], accumulated_mv);
     return ret;
 }
 

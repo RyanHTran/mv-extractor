@@ -77,12 +77,11 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     int gop_pos = 0;
 
     PyArrayObject *accumulated_mv = NULL;
-    MVS_DTYPE num_mvs = 0;
     char frame_type[2] = "?";
 
     PyObject *ret = Py_True;
     
-    if (!self->vcap.read_accumulate(&frame, &step, &width, &height, &cn, frame_type, &accumulated_mv, &num_mvs, &gop_idx, &gop_pos)) {
+    if (!self->vcap.read_accumulate(&frame, &step, &width, &height, &cn, frame_type, &accumulated_mv, &gop_idx, &gop_pos)) {
         width = 0;
         height = 0;
         step = 0;

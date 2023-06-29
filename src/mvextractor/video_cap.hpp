@@ -125,46 +125,13 @@ private:
     *    frames (P) or reference to both past and future frames (B). Motion
     *    vectors are only returned for "P" and "B" frames.
     *
-    * @param motion_vectors Pointer to the raw data of the motion vectors
-    *    belonging to the decoded frame. The motion vectors are stored as a
-    *    C contiguous array of shape (num_mvs, 10). Each row of the array
-    *    corresponds to one motion vector. The columns of each vector have the
-    *    following meaning (also refer to AVMotionVector in FFMPEG
-    *    documentation):
-    *    - 0: source: Where the current macroblock comes from. Negative value
-    *                 when it comes from the past, positive value when it comes
-    *                 from the future.
-    *    - 1: w: Width and height of the vector's macroblock.
-    *    - 2: h: Height of the vector's macroblock.
-    *    - 3: src_x: x-location of the vector's origin in source frame (in pixels).
-    *    - 4: src_y: y-location of the vector's origin in source frame (in pixels).
-    *    - 5: dst_x: x-location of the vector's destination in the current frame
-    *                (in pixels).
-    *    - 6: dst_y: y-location of the vector's destination in the current frame
-    *                (in pixels).
-    *    - 7: motion_x: src_x = dst_x + motion_x / motion_scale
-    *    - 8: motion_y: src_y = dst_y + motion_y / motion_scale
-    *    - 9: motion_scale: see definiton of columns 7 and 8
-    *    Note: If no motion vectors are present in a frame, e.g. if the frame is
-    *          an I frame, `num_mvs` will be 0 and no memory is allocated for
-    *          the motion vectors.
-    *    Note: Other than the frame array, new memory for storing motion vectors
-    *          is allocated on every call of `retrieve`, thus memcopying is not
-    *          needed to persist the motion vectors for a longer period of time.
-    *          Note, that the buffer needs to be freed manually by calling
-    *          `free(motion_vectors)` when the motion vectors are not needed
-    *          anymore.
-    *
-    * @param num_mvs The number of motion vectors corresponding to the rows of
-    *    the motion vector array.
-    *
     * @retval true if the grabbed video frame and motion vectors could be
     *    decoded and returned successfully, false otherwise.
     */
     bool retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, int *width, int *height, int *cn, int *gop_idx, int *gop_pos);
 
     // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
-    bool accumulate(AVFrame *out_frame, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs);
+    bool accumulate(AVFrame *out_frame, PyArrayObject **accumulated_mv);
 
 public:
 
@@ -195,5 +162,5 @@ public:
     */
     bool read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
 
-    bool read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
+    bool read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, int *gop_idx, int *gop_pos);
 };
