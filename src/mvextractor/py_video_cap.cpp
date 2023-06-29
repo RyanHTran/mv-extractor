@@ -68,7 +68,7 @@ VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 static PyObject *
 VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
-    uint8_t *frame = NULL;
+    PyArrayObject *frame = NULL;
     int width = 0;
     int height = 0;
     int step = 0;
@@ -91,10 +91,7 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
         ret = Py_False;
     }
 
-    npy_intp dims[3] = {height, width, cn};
-    PyObject* frame_nd = PyArray_SimpleNewFromData(3, dims, NPY_UINT8, frame);
-
-    return Py_BuildValue("(ONOsii)", ret, frame_nd, accumulated_mv, (const char*)frame_type, gop_idx, gop_pos);
+    return Py_BuildValue("(ONOsii)", ret, frame, accumulated_mv, (const char*)frame_type, gop_idx, gop_pos);
 }
 
 

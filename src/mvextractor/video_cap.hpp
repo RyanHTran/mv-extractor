@@ -67,7 +67,6 @@ private:
     AVPacket packet;
     AVFrame *frame;
     AVFrame **out_frames;
-    AVFrame rgb_frame; // TODO
     struct SwsContext *img_convert_ctx;
     int64_t frame_number;
     bool is_rtsp;
@@ -103,7 +102,7 @@ private:
     * @retval true if a new video frame could be read and decoded, false
     *    otherwise (e.g. at the end of the stream).
     */
-    bool grab(void);
+    bool grab(char *frame_type);
 
     /** Decodes and returns the grabbed frame and motion vectors
     *
@@ -162,7 +161,10 @@ private:
     * @retval true if the grabbed video frame and motion vectors could be
     *    decoded and returned successfully, false otherwise.
     */
-    bool retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
+    bool retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, int *width, int *height, int *cn, int *gop_idx, int *gop_pos);
+
+    // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
+    bool accumulate(AVFrame *out_frame, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs);
 
 public:
 
@@ -193,8 +195,5 @@ public:
     */
     bool read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
 
-    // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
-    bool accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
-
-    bool read_accumulate(uint8_t **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
+    bool read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, MVS_DTYPE *num_mvs, int *gop_idx, int *gop_pos);
 };
