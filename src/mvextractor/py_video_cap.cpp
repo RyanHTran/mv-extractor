@@ -66,6 +66,32 @@ VideoCap_read(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 }
 
 static PyObject *
+VideoCap_read_gop(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *frames = NULL;
+    int width = 0;
+    int height = 0;
+    int step = 0;
+    int cn = 0;
+    int gop_idx = -1;
+
+    char frame_type[2] = "?";
+
+    PyObject *ret = Py_True;
+
+    if (!self->vcap.read_gop(&frames, &step, &width, &height, &cn, frame_type, &gop_idx)) {
+        width = 0;
+        height = 0;
+        step = 0;
+        cn = 0;
+        frames = (PyObject *)Py_None;
+        ret = Py_False;
+    }
+
+    return Py_BuildValue("(ONsi)", ret, frames, (const char*)frame_type, gop_idx);
+}
+
+static PyObject *
 VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 {
     PyArrayObject *frame = NULL;
@@ -82,6 +108,7 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     PyObject *ret = Py_True;
     
     if (!self->vcap.read_accumulate(&frame, &step, &width, &height, &cn, frame_type, &accumulated_mv, &gop_idx, &gop_pos)) {
+        frame = (PyArrayObject *)Py_None;
         width = 0;
         height = 0;
         step = 0;
@@ -91,6 +118,34 @@ VideoCap_read_accumulate(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     }
 
     return Py_BuildValue("(ONOsii)", ret, frame, accumulated_mv, (const char*)frame_type, gop_idx, gop_pos);
+}
+
+static PyObject *
+VideoCap_read_accumulate_gop(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *frames = NULL;
+    int width = 0;
+    int height = 0;
+    int step = 0;
+    int cn = 0;
+    int gop_idx = -1;
+
+    PyObject *accumulated_mvs = NULL;
+    char frame_type[2] = "?";
+
+    PyObject *ret = Py_True;
+
+    if (!self->vcap.read_accumulate_gop(&frames, &step, &width, &height, &cn, frame_type, &accumulated_mvs, &gop_idx)) {
+        frames = (PyObject *)Py_None;
+        width = 0;
+        height = 0;
+        step = 0;
+        cn = 0;
+        accumulated_mvs = (PyObject *)Py_None;
+        ret = Py_False;
+    }
+
+    return Py_BuildValue("(ONOsi)", ret, frames, accumulated_mvs, (const char*)frame_type, gop_idx);
 }
 
 
@@ -105,7 +160,9 @@ VideoCap_release(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
 static PyMethodDef VideoCap_methods[] = {
     {"open", (PyCFunction) VideoCap_open, METH_VARARGS, "Open a video file or device with given filename/url"},
     {"read", (PyCFunction) VideoCap_read, METH_NOARGS, "Grab and decode the next frame and motion vectors"},
-    {"read_accumulate", (PyCFunction) VideoCap_read_accumulate, METH_NOARGS, "Decode the grabbed frame and accumulate the motion vectors"},
+    {"read_gop", (PyCFunction) VideoCap_read_gop, METH_NOARGS, "Grab and decode the non-keyframes in the next GOP"},
+    {"read_accumulate", (PyCFunction) VideoCap_read_accumulate, METH_NOARGS, "Decode the next frame and accumulate the motion vectors"},
+    {"read_accumulate_gop", (PyCFunction) VideoCap_read_accumulate_gop, METH_NOARGS, "Decode the non-keyframes for the next GOP and accumulate the motion vectors"},
     {"release", (PyCFunction) VideoCap_release, METH_NOARGS, "Release the video device and free ressources"},
     {NULL}  /* Sentinel */
 };

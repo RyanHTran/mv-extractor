@@ -70,7 +70,7 @@ private:
     struct SwsContext *img_convert_ctx;
     int64_t frame_number;
     bool is_rtsp;
-    PyArrayObject *running_mv_sum;
+    PyArrayObject **out_mvs;
     int *prev_locations;
     int *curr_locations;
     int gop_idx;
@@ -95,7 +95,7 @@ private:
     */
     bool check_format_rtsp(const char *format_names);
 
-    void reset_accumulate(int **prev_locations, int **curr_locations, PyArrayObject **running_mv_sum, int w, int h);
+    void reset_accumulate(int **prev_locations, int **curr_locations, int w, int h);
 
     /** Reads the next video frame and motion vectors from the stream
     *
@@ -128,10 +128,10 @@ private:
     * @retval true if the grabbed video frame and motion vectors could be
     *    decoded and returned successfully, false otherwise.
     */
-    bool retrieve(AVFrame *out_frame, PyArrayObject **frame, int *step, int *width, int *height, int *cn, int *gop_idx, int *gop_pos);
+    bool retrieve(AVFrame *out_frame, int *step, int *width, int *height, int *cn, int *gop_idx, int *gop_pos);
 
     // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
-    bool accumulate(AVFrame *out_frame, PyArrayObject **accumulated_mv);
+    bool accumulate(AVFrame *out_frame, PyArrayObject *out_mv);
 
 public:
 
@@ -162,5 +162,9 @@ public:
     */
     bool read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos);
 
+    bool read_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx);
+
     bool read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, int *gop_idx, int *gop_pos);
+
+    bool read_accumulate_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, PyObject **accumulated_mvs, int *gop_idx);
 };
