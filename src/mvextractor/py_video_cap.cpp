@@ -130,22 +130,24 @@ VideoCap_read_accumulate_gop(VideoCapObject *self, PyObject *Py_UNUSED(ignored))
     int cn = 0;
     int gop_idx = -1;
 
-    PyObject *accumulated_mvs = NULL;
+    PyObject *forward_mvs = NULL;
+    PyObject *backward_mvs = NULL;
     char frame_type[2] = "?";
 
     PyObject *ret = Py_True;
 
-    if (!self->vcap.read_accumulate_gop(&frames, &step, &width, &height, &cn, frame_type, &accumulated_mvs, &gop_idx)) {
+    if (!self->vcap.read_accumulate_gop(&frames, &step, &width, &height, &cn, frame_type, &forward_mvs, &backward_mvs, &gop_idx)) {
         frames = (PyObject *)Py_None;
         width = 0;
         height = 0;
         step = 0;
         cn = 0;
-        accumulated_mvs = (PyObject *)Py_None;
+        forward_mvs = (PyObject *)Py_None;
+        backward_mvs = (PyObject *)Py_None;
         ret = Py_False;
     }
 
-    return Py_BuildValue("(ONOsi)", ret, frames, accumulated_mvs, (const char*)frame_type, gop_idx);
+    return Py_BuildValue("(ONOOsi)", ret, frames, forward_mvs, backward_mvs, (const char*)frame_type, gop_idx);
 }
 
 

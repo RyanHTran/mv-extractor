@@ -16,6 +16,7 @@ VideoCap::VideoCap() {
     this->frame_number = 0;
     this->is_rtsp = false;
     this->out_mvs = NULL;
+    this->out_mvs_backward = NULL;
     this->prev_locations = NULL;
     this->curr_locations = NULL;
     this->gop_idx = -1;
@@ -85,6 +86,14 @@ void VideoCap::release(void) {
             }
         }
         this->out_mvs = NULL;
+    }
+    if (this->out_mvs_backward != NULL) {
+        for (int i = 0; i < this->gop_size; i++) {
+            if (this->out_mvs_backward[i] != NULL) {
+                Py_CLEAR(this->out_mvs_backward[i]);
+            }
+        }
+        this->out_mvs_backward = NULL;
     }
     if (this->prev_locations != NULL){
         free(this->prev_locations);
@@ -237,6 +246,19 @@ bool VideoCap::open(const char *url, char frame_type, int iframe_width, int ifra
         }
     }
 
+    this->out_mvs_backward = (PyArrayObject**) malloc(this->gop_size * sizeof(PyArrayObject*));
+    if (!this->out_mvs_backward) {
+        this->release();
+        return false;
+    }
+    for (int i = 0; i < this->gop_size; i++) {
+        this->out_mvs_backward[i] = (PyArrayObject *)PyArray_ZEROS(3, dims, NPY_INT16, 0);
+        if (!this->out_mvs_backward[i]) {
+            this->release();
+            return false;
+        }
+    }
+
     if (this->video_stream_idx < 0) {
         this->release();
         return false;
@@ -306,11 +328,6 @@ bool VideoCap::grab(char *frame_type) {
         this->gop_pos = 0;
     } else {
         this->gop_pos += 1;
-    }
-
-    if (frame_type[0] == 'I' || this->prev_locations == NULL || this->curr_locations == NULL) {
-        this->reset_accumulate(&(this->prev_locations), &(this->curr_locations), 
-            this->video_dec_ctx->width, this->video_dec_ctx->height);
     }
 
     return valid;
@@ -421,10 +438,13 @@ bool VideoCap::read_gop(PyObject **frames, int *step, int *width, int *height, i
             PyList_SetItem(*frames, i, PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[i]->data[0]));
     }
 
+    // This function only returns P-frames
+    frame_type[0] = 'P';
+
     return ret;
 }
 
-bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv) {
+bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwards) {
     // get motion vectors
     AVFrameSideData *sd = av_frame_get_side_data(out_frame, AV_FRAME_DATA_MOTION_VECTORS);
     if (sd) {
@@ -444,9 +464,16 @@ bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv) {
             // private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
             for (int i = 0; i < num_mvs; i++) {
                 const AVMotionVector *mv = &mvs[i];
-                val_x = mv->dst_x - mv->src_x;
-                val_y = mv->dst_y - mv->src_y;
-                // assert(mv->source == -1);
+                if (backwards) {
+                    val_x = mv->src_x - mv->dst_x;
+                    val_y = mv->src_y - mv->dst_y;
+                } else {
+                    val_x = mv->dst_x - mv->src_x;
+                    val_y = mv->dst_y - mv->src_y;
+                }
+                
+                assert(mv->source == -1);
+                assert(mv->motion_scale == 1);
 
                 if (val_x != 0 || val_y != 0) {
                     for (int x_start = 0; x_start < mv->w / this->mv_res_reduction; ++x_start) {
@@ -462,12 +489,21 @@ bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv) {
                                 p_src_y >= 0 && p_src_y < mv_height && 
                                 p_src_x >= 0 && p_src_x < mv_width) {
                                 
-                                // Shift macroblock in curr_locations
-                                original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
-                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
-                                
-                                original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
-                                this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
+                                if (backwards) {
+                                    // Shift macroblock in curr_locations
+                                    original_x = this->prev_locations[p_dst_x * mv_height * 2 + p_dst_y * 2];
+                                    this->curr_locations[p_src_x * mv_height * 2 + p_src_y * 2] = original_x;
+                                    
+                                    original_y = this->prev_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1];
+                                    this->curr_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1] = original_y;
+                                } else {
+                                    // Shift macroblock in curr_locations
+                                    original_x = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2];
+                                    this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2] = original_x;
+                                    
+                                    original_y = this->prev_locations[p_src_x * mv_height * 2 + p_src_y * 2 + 1];
+                                    this->curr_locations[p_dst_x * mv_height * 2 + p_dst_y * 2 + 1] = original_y;
+                                }
                                 
                                 // Accumulate into out_mv the motion vector for the pixels in this macroblock
                                 // #pragma omp atomic update
@@ -489,6 +525,10 @@ bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv) {
 bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, int *gop_idx, int *gop_pos) {
     bool ret = this->grab(frame_type);
 
+    // Reset forward accumulate
+    if (frame_type[0] == 'I' || this->prev_locations == NULL || this->curr_locations == NULL)
+        this->reset_accumulate(false);
+
     if (this->frame_type == 'P' && frame_type[0] != 'P'){
         return this->read_accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, gop_idx, gop_pos);
     }
@@ -500,32 +540,46 @@ bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int
         *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[0]->data[0]);
     }
     if (ret)
-        ret = this->accumulate(this->out_frames[0], this->out_mvs[0]);
+        ret = this->accumulate(this->out_frames[0], this->out_mvs[0], false);
     if (ret)
         *accumulated_mv = this->out_mvs[0];
     return ret;
 }
 
-bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, PyObject **accumulated_mvs, int *gop_idx) {
+bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, PyObject **forward_mvs, PyObject **backward_mvs, int *gop_idx) {
 
     bool ret = this->grab(frame_type);
     int prev_gop_idx = this->gop_idx;
-    int gop_pos; // dummy holder
+    int dummy_var;
     int idx = 0;
 
     while (ret && (prev_gop_idx == this->gop_idx)) {
-        ret = this->retrieve(this->out_frames[idx], step, width, height, cn, gop_idx, &gop_pos);
+        ret = this->retrieve(this->out_frames[idx], step, width, height, cn, gop_idx, &dummy_var);
 
         ret = this->grab(frame_type);
         idx += 1;
     }
 
-    // Accumulate motion vectors
+    this->reset_accumulate(false);
+
+    // Accumulate motion vectors in the forward direction
     if (ret) {
         for(int i = 0; i < idx; i++) {
             if (i > 0)
                 PyArray_CopyInto(this->out_mvs[i], this->out_mvs[i-1]);
-            ret = this->accumulate(this->out_frames[i], this->out_mvs[i]);
+            ret = this->accumulate(this->out_frames[i], this->out_mvs[i], false);
+        }
+    }
+
+    this->reset_accumulate(true);
+
+    // Accumulate motion vectors in the backwards direction
+    if (ret) {
+        // Skip last frame (this->gop_size - 1) because no backwards motion vectors available
+        for(int i = 1; i < idx; i++) {
+            if (i > 0)
+                PyArray_CopyInto(this->out_mvs_backward[this->gop_size - 1 - i], this->out_mvs_backward[this->gop_size - 1 - i + 1]);
+            ret = this->accumulate(this->out_frames[idx - 1 - i + 1], this->out_mvs_backward[this->gop_size - 1 - i], true);
         }
     }
     
@@ -533,12 +587,17 @@ bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int
         npy_intp dims[3] = {*height, *width, *cn};
 
         *frames = PyList_New(idx);
-        *accumulated_mvs = PyList_New(idx);
+        *forward_mvs = PyList_New(idx);
+        *backward_mvs = PyList_New(idx);
         for(int i = 0; i < idx; i++) {
             PyList_SetItem(*frames, i, PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[i]->data[0]));
-            PyList_SetItem(*accumulated_mvs, i, (PyObject*)this->out_mvs[i]);
+            PyList_SetItem(*forward_mvs, i, (PyObject*)this->out_mvs[i]);
+            PyList_SetItem(*backward_mvs, idx - 1 - i, (PyObject*)this->out_mvs_backward[this->gop_size - 1 - i]);
         }
     }
+
+    // This function only returns P-frames
+    frame_type[0] = 'P';
 
     return ret;
 }
@@ -566,27 +625,32 @@ bool VideoCap::check_format_rtsp(const char *format_names) {
  * Resets this->out_mvs to 0.
  * Allocates arrays if they do not yet exist.
  */
-void VideoCap::reset_accumulate(int **prev_locations, int **curr_locations, int width, int height) {
-    int h = height / this->mv_res_reduction;
-    int w = width / this->mv_res_reduction;
+void VideoCap::reset_accumulate(bool backwards) {
+    int h = this->video_dec_ctx->height / this->mv_res_reduction;
+    int w = this->video_dec_ctx->width / this->mv_res_reduction;
 
-    if (*prev_locations == NULL){
-        *prev_locations = (int*) malloc(w * h * 2 * sizeof(int));
+    if (this->prev_locations == NULL){
+        this->prev_locations = (int*) malloc(w * h * 2 * sizeof(int));
     }
 
-    if (*curr_locations == NULL){
-        *curr_locations = (int*) malloc(w * h * 2 * sizeof(int));
+    if (this->curr_locations == NULL){
+        this->curr_locations = (int*) malloc(w * h * 2 * sizeof(int));
     }
 
     // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
     for (int x = 0; x < w; ++x) {
         for (int y = 0; y < h; ++y) {
-            (*prev_locations)[x * h * 2 + y * 2    ]  = x;
-            (*prev_locations)[x * h * 2 + y * 2 + 1]  = y;
+            this->prev_locations[x * h * 2 + y * 2    ]  = x;
+            this->prev_locations[x * h * 2 + y * 2 + 1]  = y;
         }
     }
-    memcpy(*curr_locations, *prev_locations, h * w * 2 * sizeof(int));
+    memcpy(this->curr_locations, this->prev_locations, h * w * 2 * sizeof(int));
 
-    // Only zero out 1st one because out_mvs[i] is copied into out_mvs[i+1] before each accumulation step
-    PyArray_FILLWBYTE(this->out_mvs[0], 0);
+    if (backwards) {
+        PyArray_FILLWBYTE(this->out_mvs_backward[this->gop_size - 1], 0);
+    } else {
+        // Only zero out 1st one because out_mvs[i] is copied into out_mvs[i+1] before each accumulation step
+        PyArray_FILLWBYTE(this->out_mvs[0], 0);
+    }
+    
 }
