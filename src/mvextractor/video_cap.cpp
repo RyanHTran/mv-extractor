@@ -401,21 +401,20 @@ bool VideoCap::retrieve(AVFrame *out_frame, int *step, int *width, int *height, 
 }
 
 bool VideoCap::read(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx, int *gop_pos) {
-    bool ret = this->grab(frame_type);
+    if (!this->grab(frame_type))
+        return false;
 
     if (this->frame_type == 'P' && frame_type[0] != 'P'){
         return this->read(frame, step, width, height, cn, frame_type, gop_idx, gop_pos);
     }
 
-    if (ret)
-        ret = this->retrieve(this->out_frames[0], step, width, height, cn, gop_idx, gop_pos);
+    if (!this->retrieve(this->out_frames[0], step, width, height, cn, gop_idx, gop_pos))
+        return false;
 
-    if (ret) {
-        npy_intp dims[3] = {*height, *width, *cn};
-        *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[0]->data[0]);
-    }
+    npy_intp dims[3] = {*height, *width, *cn};
+    *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[0]->data[0]);
     
-    return ret;
+    return true;
 }
 
 bool VideoCap::read_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx) {
@@ -531,7 +530,8 @@ void VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwa
 }
 
 bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, int *gop_idx, int *gop_pos) {
-    bool ret = this->grab(frame_type);
+    if (!this->grab(frame_type))
+        return false;
 
     // Reset forward accumulate
     if (frame_type[0] == 'I' || this->prev_locations == NULL || this->curr_locations == NULL)
@@ -541,17 +541,17 @@ bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int
         return this->read_accumulate(frame, step, width, height, cn, frame_type, accumulated_mv, gop_idx, gop_pos);
     }
 
-    if (ret)
-        ret = this->retrieve(this->out_frames[0], step, width, height, cn, gop_idx, gop_pos);
-    if (ret) {
-        npy_intp dims[3] = {*height, *width, *cn};
-        *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[0]->data[0]);
-    }
-    if (ret)
-        this->accumulate(this->out_frames[0], this->out_mvs[0], false);
-    if (ret)
-        *accumulated_mv = this->out_mvs[0];
-    return ret;
+    if (!this->retrieve(this->out_frames[0], step, width, height, cn, gop_idx, gop_pos))
+        return false;
+
+    npy_intp dims[3] = {*height, *width, *cn};
+    *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[0]->data[0]);
+    
+    this->accumulate(this->out_frames[0], this->out_mvs[0], false);
+
+    *accumulated_mv = this->out_mvs[0];
+
+    return true;
 }
 
 bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, PyObject **forward_mvs, PyObject **backward_mvs, int *gop_idx) {

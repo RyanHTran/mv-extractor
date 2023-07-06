@@ -11,7 +11,7 @@ from mvextractor.videocap import VideoCap
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Extract motion vectors from video.')
-    parser.add_argument('video_url', type=str, nargs='?', default="cam2_2.mp4", help='File path or url of the video stream')
+    parser.add_argument('video_url', type=str, nargs='?', default="cam1_short.mp4", help='File path or url of the video stream')
     parser.add_argument('--verbose', action='store_true', default=False, help='Show detailled text output')
     parser.add_argument('--dump', action='store_true', default=False, help='Dump frames, motion vectors, frame types, and timestamps to output directory')
     parser.add_argument('--verify', action='store_true', default=False, help='Verify that mv extraction is correct')
@@ -56,7 +56,7 @@ if __name__ == "__main__":
                 
                 if args.verify:
                     # Check motion vectors
-                    load_path = os.path.join('reference_cam2_2', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
+                    load_path = os.path.join('reference_cam1_short', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
                     reference_mv = np.load(load_path)['arr_0']
                     if not (motion_vectors == reference_mv).all():
                         print('Decoded motion vectors do not match expected output at frame {}: {}_{}.npz'.format(step, gop_idx, gop_pos))
@@ -64,7 +64,7 @@ if __name__ == "__main__":
                         print('Got: {}'.format(motion_vectors[motion_vectors != reference_mv]))
                         raise ValueError()
                     # Check frames
-                    load_path = os.path.join('reference_cam2_2', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos))
+                    load_path = os.path.join('reference_cam1_short', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos))
                     reference_bgr = cv2.imread(load_path)
                     if not (frame == reference_bgr).all():
                         print('Decoded bgr do not match expected output at frame {}_{}'.format(gop_idx, gop_pos))
