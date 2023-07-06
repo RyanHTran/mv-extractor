@@ -464,8 +464,8 @@ bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwa
             int mv_width = this->video_dec_ctx->width / this->mv_res_reduction;
             int mv_height = this->video_dec_ctx->height / this->mv_res_reduction;
 
-            // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
-            // private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
+            #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4) \
+            private(p_dst_x, p_dst_y, p_src_x, p_src_y, val_x, val_y, original_x, original_y) 
             for (int i = 0; i < num_mvs; i++) {
                 const AVMotionVector *mv = &mvs[i];
                 if (backwards) {
@@ -510,9 +510,9 @@ bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwa
                                 }
                                 
                                 // Accumulate into out_mv the motion vector for the pixels in this macroblock
-                                // #pragma omp atomic update
+                                #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(out_mv, original_y, original_x, 0)) += val_x;
-                                // #pragma omp atomic update
+                                #pragma omp atomic update
                                 *((npy_int16*)PyArray_GETPTR3(out_mv, original_y, original_x, 1)) += val_y;
                             }
                         }
@@ -645,7 +645,7 @@ void VideoCap::reset_accumulate(bool backwards) {
         this->curr_locations = (int*) malloc(w * h * 2 * sizeof(int));
     }
 
-    // #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
+    #pragma omp parallel for num_threads(std::thread::hardware_concurrency() / 4)
     for (int x = 0; x < w; ++x) {
         for (int y = 0; y < h; ++y) {
             this->prev_locations[x * h * 2 + y * 2    ]  = x;
