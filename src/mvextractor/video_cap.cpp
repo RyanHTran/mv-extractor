@@ -419,15 +419,19 @@ bool VideoCap::read(PyArrayObject **frame, int *step, int *width, int *height, i
 bool VideoCap::read_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx) {
 
     bool ret = this->grab(frame_type);
-    int prev_gop_idx = this->gop_idx;
     int gop_pos; // dummy holder
     int idx = 0;
 
-    while (ret && (prev_gop_idx == this->gop_idx)) {
+    while (ret && (frame_type[0] != 'I')) {
         ret = this->retrieve(this->out_frames[idx], step, width, height, cn, gop_idx, &gop_pos);
 
         ret = this->grab(frame_type);
         idx += 1;
+    }
+
+    if (idx == 0) {
+        // No P-frames in this GOP
+        return this->read_gop(frames, step, width, height, cn, frame_type, gop_idx);
     }
     
     if (ret) {
@@ -549,15 +553,19 @@ bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int
 bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, PyObject **forward_mvs, PyObject **backward_mvs, int *gop_idx) {
 
     bool ret = this->grab(frame_type);
-    int prev_gop_idx = this->gop_idx;
     int dummy_var;
     int idx = 0;
 
-    while (ret && (prev_gop_idx == this->gop_idx)) {
+    while (ret && (frame_type[0] != 'I')) {
         ret = this->retrieve(this->out_frames[idx], step, width, height, cn, gop_idx, &dummy_var);
 
         ret = this->grab(frame_type);
         idx += 1;
+    }
+
+    if (idx == 0) {
+        // No P-frames in this GOP
+        return this->read_accumulate_gop(frames, step, width, height, cn, frame_type, forward_mvs, backward_mvs, gop_idx);
     }
 
     this->reset_accumulate(false);

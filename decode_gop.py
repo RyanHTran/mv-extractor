@@ -50,12 +50,12 @@ if __name__ == "__main__":
             for i in range(len(frames)):
                 frame = frames[i]
                 motion_vectors = forward_mvs[i]
-                # import pdb; pdb.set_trace()
+                
                 frame_height, frame_width = frame.shape[0], frame.shape[1]
                 
                 if args.verify:
                     # Check motion vectors
-                    load_path = os.path.join('reference', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
+                    load_path = os.path.join('reference_cam2_2', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
                     reference_mv = np.load(load_path)['arr_0']
                     if not (motion_vectors == reference_mv).all():
                         print('Decoded motion vectors do not match expected output at frame {}: {}_{}.npz'.format(step, gop_idx, gop_pos))
@@ -63,7 +63,7 @@ if __name__ == "__main__":
                         print('Got: {}'.format(motion_vectors[motion_vectors != reference_mv]))
                         raise ValueError()
                     # Check frames
-                    load_path = os.path.join('reference', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos))
+                    load_path = os.path.join('reference_cam2_2', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos))
                     reference_bgr = cv2.imread(load_path)
                     if not (frame == reference_bgr).all():
                         print('Decoded bgr do not match expected output at frame {}_{}'.format(gop_idx, gop_pos))
@@ -83,8 +83,6 @@ if __name__ == "__main__":
 
                     print("frame size: {} | ".format(np.shape(frame)), end=" ")
                     print("motion vectors: {}".format(np.shape(motion_vectors)))
-
-                # cv2.imwrite(os.path.join('reference', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos)), frame)
 
                 step += 1
                 pbar.update(1)

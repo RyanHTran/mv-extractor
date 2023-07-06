@@ -73,6 +73,7 @@ if __name__ == "__main__":
                 save_path = os.path.join('out', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
                 np.savez_compressed(save_path, (motion_vectors).astype(np.int16))
                 cv2.imwrite(os.path.join(f"out", "iframe", '{}_{}.jpg'.format(gop_idx, gop_pos)), frame)
+                # cv2.imwrite(os.path.join('reference', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos)), frame)
 
             # print results
             if args.verbose:
@@ -81,8 +82,6 @@ if __name__ == "__main__":
 
                 print("frame size: {} | ".format(np.shape(frame)), end=" ")
                 print("motion vectors: {}".format(np.shape(motion_vectors)))
-
-            # cv2.imwrite(os.path.join('reference', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos)), frame)
 
             step += 1
             pbar.update(1)
