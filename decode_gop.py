@@ -50,7 +50,8 @@ if __name__ == "__main__":
             for i in range(len(frames)):
                 frame = frames[i]
                 motion_vectors = forward_mvs[i]
-                
+                backward_motion_vectors = backward_mvs[i]
+
                 frame_height, frame_width = frame.shape[0], frame.shape[1]
                 
                 if args.verify:
@@ -72,8 +73,9 @@ if __name__ == "__main__":
                         raise ValueError()
 
                 if args.dump:
+                    stacked_motion_vectors = np.concatenate((motion_vectors, backward_motion_vectors), axis=2)
                     save_path = os.path.join('out', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
-                    np.savez_compressed(save_path, (motion_vectors).astype(np.int16))
+                    np.savez_compressed(save_path, (stacked_motion_vectors).astype(np.int16))
                     cv2.imwrite(os.path.join(f"out", "iframe", '{}_{}.jpg'.format(gop_idx, gop_pos)), frame)
 
                 # print results
