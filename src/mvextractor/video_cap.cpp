@@ -26,6 +26,7 @@ VideoCap::VideoCap() {
     this->iframe_width = -1;
     this->iframe_height = -1;
     this->gop_size = -1;
+    this->finished_reading = true;
 
     memset(&(this->packet), 0, sizeof(this->packet));
     av_init_packet(&(this->packet));
@@ -202,6 +203,7 @@ bool VideoCap::open(const char *url, char frame_type, int iframe_width, int ifra
     this->iframe_height = iframe_height;
     this->mv_res_reduction = mv_res_reduction;
     this->gop_size = std::max(gop_size, 1);
+    this->finished_reading = false;
     
     // print info (duration, bitrate, streams, container, programs, metadata, side data, codec, time base)
 #ifdef DEBUG
@@ -417,38 +419,42 @@ bool VideoCap::read(PyArrayObject **frame, int *step, int *width, int *height, i
 }
 
 bool VideoCap::read_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, int *gop_idx) {
+    if (this->finished_reading) 
+        return false;
 
     bool ret = this->grab(frame_type);
-    int gop_pos; // dummy holder
+    if (!ret)
+        return false;
+
+    int dummy_var;
     int idx = 0;
 
     while (ret && (frame_type[0] != 'I')) {
-        ret = this->retrieve(this->out_frames[idx], step, width, height, cn, gop_idx, &gop_pos);
+        ret = this->retrieve(this->out_frames[idx], step, width, height, cn, gop_idx, &dummy_var);
 
         ret = this->grab(frame_type);
         idx += 1;
     }
+    this->finished_reading = !ret;
 
     if (idx == 0) {
         // No P-frames in this GOP
         return this->read_gop(frames, step, width, height, cn, frame_type, gop_idx);
     }
-    
-    if (ret) {
-        npy_intp dims[3] = {*height, *width, *cn};
 
-        *frames = PyList_New(idx);
-        for(int i = 0; i < idx; i++)
-            PyList_SetItem(*frames, i, PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[i]->data[0]));
-    }
+    npy_intp dims[3] = {*height, *width, *cn};
+
+    *frames = PyList_New(idx);
+    for(int i = 0; i < idx; i++)
+        PyList_SetItem(*frames, i, PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[i]->data[0]));
 
     // This function only returns P-frames
     frame_type[0] = 'P';
 
-    return ret;
+    return true;
 }
 
-bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwards) {
+void VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwards) {
     // get motion vectors
     AVFrameSideData *sd = av_frame_get_side_data(out_frame, AV_FRAME_DATA_MOTION_VECTORS);
     if (sd) {
@@ -522,8 +528,6 @@ bool VideoCap::accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwa
             memcpy(this->prev_locations, this->curr_locations, mv_width * mv_height * 2 * sizeof(int));
         }
     }
-
-    return true;
 }
 
 bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int *height, int *cn, char *frame_type, PyArrayObject **accumulated_mv, int *gop_idx, int *gop_pos) {
@@ -544,15 +548,20 @@ bool VideoCap::read_accumulate(PyArrayObject **frame, int *step, int *width, int
         *frame = (PyArrayObject *)PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[0]->data[0]);
     }
     if (ret)
-        ret = this->accumulate(this->out_frames[0], this->out_mvs[0], false);
+        this->accumulate(this->out_frames[0], this->out_mvs[0], false);
     if (ret)
         *accumulated_mv = this->out_mvs[0];
     return ret;
 }
 
 bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int *height, int *cn, char *frame_type, PyObject **forward_mvs, PyObject **backward_mvs, int *gop_idx) {
+    if (this->finished_reading) 
+        return false;
 
     bool ret = this->grab(frame_type);
+    if (!ret)
+        return false;
+
     int dummy_var;
     int idx = 0;
 
@@ -562,6 +571,7 @@ bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int
         ret = this->grab(frame_type);
         idx += 1;
     }
+    this->finished_reading = !ret;
 
     if (idx == 0) {
         // No P-frames in this GOP
@@ -571,43 +581,37 @@ bool VideoCap::read_accumulate_gop(PyObject **frames, int *step, int *width, int
     this->reset_accumulate(false);
 
     // Accumulate motion vectors in the forward direction
-    if (ret) {
-        for(int i = 0; i < idx; i++) {
-            if (i > 0)
-                PyArray_CopyInto(this->out_mvs[i], this->out_mvs[i-1]);
-            ret = this->accumulate(this->out_frames[i], this->out_mvs[i], false);
-        }
+    for(int i = 0; i < idx; i++) {
+        if (i > 0)
+            PyArray_CopyInto(this->out_mvs[i], this->out_mvs[i-1]);
+        this->accumulate(this->out_frames[i], this->out_mvs[i], false);
     }
 
     this->reset_accumulate(true);
 
     // Accumulate motion vectors in the backwards direction
-    if (ret) {
-        // Skip last frame (this->gop_size - 1) because no backwards motion vectors available
-        for(int i = 1; i < idx; i++) {
-            if (i > 0)
-                PyArray_CopyInto(this->out_mvs_backward[this->gop_size - 1 - i], this->out_mvs_backward[this->gop_size - 1 - i + 1]);
-            ret = this->accumulate(this->out_frames[idx - 1 - i + 1], this->out_mvs_backward[this->gop_size - 1 - i], true);
-        }
+    // Skip last frame (this->gop_size - 1) because no backwards motion vectors available
+    for(int i = 1; i < idx; i++) {
+        if (i > 0)
+            PyArray_CopyInto(this->out_mvs_backward[this->gop_size - 1 - i], this->out_mvs_backward[this->gop_size - 1 - i + 1]);
+        this->accumulate(this->out_frames[idx - 1 - i + 1], this->out_mvs_backward[this->gop_size - 1 - i], true);
     }
     
-    if (ret) {
-        npy_intp dims[3] = {*height, *width, *cn};
+    npy_intp dims[3] = {*height, *width, *cn};
 
-        *frames = PyList_New(idx);
-        *forward_mvs = PyList_New(idx);
-        *backward_mvs = PyList_New(idx);
-        for(int i = 0; i < idx; i++) {
-            PyList_SetItem(*frames, i, PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[i]->data[0]));
-            PyList_SetItem(*forward_mvs, i, (PyObject*)this->out_mvs[i]);
-            PyList_SetItem(*backward_mvs, idx - 1 - i, (PyObject*)this->out_mvs_backward[this->gop_size - 1 - i]);
-        }
+    *frames = PyList_New(idx);
+    *forward_mvs = PyList_New(idx);
+    *backward_mvs = PyList_New(idx);
+    for(int i = 0; i < idx; i++) {
+        PyList_SetItem(*frames, i, PyArray_SimpleNewFromData(3, dims, NPY_UINT8, this->out_frames[i]->data[0]));
+        PyList_SetItem(*forward_mvs, i, (PyObject*)this->out_mvs[i]);
+        PyList_SetItem(*backward_mvs, idx - 1 - i, (PyObject*)this->out_mvs_backward[this->gop_size - 1 - i]);
     }
 
     // This function only returns P-frames
     frame_type[0] = 'P';
 
-    return ret;
+    return true;
 }
 
 // Returns true if the comma-separated list of format names contains "rtsp"

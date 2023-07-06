@@ -81,6 +81,7 @@ private:
     int iframe_width;
     int iframe_height;
     int gop_size;
+    bool finished_reading;
 #if USE_AV_INTERRUPT_CALLBACK
     AVInterruptCallbackMetadata interrupt_metadata;
 #endif
@@ -132,7 +133,7 @@ private:
     bool retrieve(AVFrame *out_frame, int *step, int *width, int *height, int *cn, int *gop_idx, int *gop_pos);
 
     // Performs the same decoding as `retrieve` and also accumulates motion vectors into 2D array
-    bool accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwards);
+    void accumulate(AVFrame *out_frame, PyArrayObject *out_mv, bool backwards);
 
 public:
 
