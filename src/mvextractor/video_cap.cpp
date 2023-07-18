@@ -169,8 +169,9 @@ bool VideoCap::open(const char *url, char frame_type, int iframe_width, int ifra
         this->release();
         return false;
     }
-        
-    this->video_dec_ctx->thread_count = std::thread::hardware_concurrency();
+    
+    unsigned int FFMPEG_MAX_THREADS = 16;
+    this->video_dec_ctx->thread_count = std::min(std::thread::hardware_concurrency(), FFMPEG_MAX_THREADS);
 #ifdef DEBUG
     std::cout << "Using parallel processing with " << this->video_dec_ctx->thread_count << " threads" << std::endl;
 #endif
