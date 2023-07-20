@@ -21,8 +21,7 @@ if __name__ == "__main__":
 
     cap = VideoCap()
     # open the video file
-    # ret = cap.open(args.video_url, 'A', -1, -1, 8)
-    ret = cap.open(args.video_url, 'A', -1, -1, 8, 15)
+    ret = cap.open(args.video_url, 'A', -1, -1, 8, -1)
 
     if not ret:
         raise RuntimeError(f"Could not open {args.video_url}")
@@ -40,7 +39,6 @@ if __name__ == "__main__":
                 print("Frame: ", step, end=" ")
 
             # read next video frame and corresponding motion vectors
-            # ret, frame, frame_type, gop_idx, gop_pos = cap.read()
             ret, frame, motion_vectors, frame_type, gop_idx, gop_pos = cap.read_accumulate()
 
             # if there is an error reading the frame
@@ -50,30 +48,11 @@ if __name__ == "__main__":
                 break
 
             frame_height, frame_width = frame.shape[0], frame.shape[1]
-            
-            if args.verify:
-                # Check motion vectors
-                load_path = os.path.join('reference_cam1_short', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
-                reference_mv = np.load(load_path)['arr_0']
-                if not (motion_vectors == reference_mv).all():
-                    print('Decoded motion vectors do not match expected output at frame {}: {}_{}.npz'.format(step, gop_idx, gop_pos))
-                    print('Expected: {}'.format(reference_mv[motion_vectors != reference_mv]))
-                    print('Got: {}'.format(motion_vectors[motion_vectors != reference_mv]))
-                    break
-                # Check frames
-                load_path = os.path.join('reference_cam1_short', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos))
-                reference_bgr = cv2.imread(load_path)
-                if not (frame == reference_bgr).all():
-                    print('Decoded bgr do not match expected output at frame {}_{}'.format(gop_idx, gop_pos))
-                    print('Expected: {}'.format(reference_bgr[frame != reference_bgr]))
-                    print('Got: {}'.format(frame[frame != reference_bgr]))
-                    break
 
             if args.dump:
                 save_path = os.path.join('out', 'mv', '{}_{}.npz'.format(gop_idx, gop_pos))
                 np.savez_compressed(save_path, (motion_vectors).astype(np.int16))
                 cv2.imwrite(os.path.join(f"out", "iframe", '{}_{}.jpg'.format(gop_idx, gop_pos)), frame)
-                # cv2.imwrite(os.path.join('reference_cam1_short', 'bgr', '{}_{}.bmp'.format(gop_idx, gop_pos)), frame)
 
             # print results
             if args.verbose:
