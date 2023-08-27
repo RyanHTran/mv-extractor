@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
     cap = VideoCap()
     # open the video file
-    ret = cap.open(args.video_url, 'A', -1, -1, 8, 15)
+    ret = cap.open(args.video_url, 'A', -1, -1, 8, 32)
 
     if not ret:
         raise RuntimeError(f"Could not open {args.video_url}")
