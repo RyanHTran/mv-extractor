@@ -1,0 +1,3 @@
+[submodule "src/mvextractor/FFmpeg"]
+	path = src/mvextractor/FFmpeg
+	url = ./src/mvextractor/FFmpeg.git
