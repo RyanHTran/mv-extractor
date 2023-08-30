@@ -7,9 +7,12 @@
 
 // FFMPEG
 extern "C" {
-#include <libavutil/motion_vector.h>
-#include <libavformat/avformat.h>
-#include <libswscale/swscale.h>
+// #include <libavutil/motion_vector.h>
+#include "FFmpeg/libavutil/motion_vector.h"
+// #include <libavformat/avformat.h>
+#include "FFmpeg/libavformat/avformat.h"
+// #include <libswscale/swscale.h>
+#include "FFmpeg/libswscale/swscale.h"
 }
 
 #include "time_cvt.hpp"
